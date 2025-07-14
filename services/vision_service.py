@@ -1,26 +1,59 @@
 from google.cloud import vision
 from google.cloud.exceptions import GoogleCloudError
+from google.auth.exceptions import DefaultCredentialsError
 from typing import Dict, Any, List, Optional
 import io
 import base64
+import logging
 from datetime import datetime
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 class VisionService:
     """Google Cloud Vision 分析服务"""
     
     def __init__(self):
-        self.client = vision.ImageAnnotatorClient()
+        self.client = None
+        self.enabled = False
+        
+        try:
+            # 尝试初始化Google Cloud Vision客户端
+            self.client = vision.ImageAnnotatorClient()
+            self.enabled = True
+            logger.info("Google Cloud Vision客户端初始化成功")
+        except DefaultCredentialsError:
+            logger.warning("Google Cloud凭据未找到，Vision分析功能将被禁用")
+            self.enabled = False
+        except Exception as e:
+            logger.error(f"Google Cloud Vision初始化失败: {e}")
+            self.enabled = False
+    
+    def is_enabled(self) -> bool:
+        """检查Vision服务是否可用"""
+        return self.enabled
     
     async def analyze_image(self, image_content: bytes, analysis_type: str = "comprehensive") -> Dict[str, Any]:
         """
         分析图像内容
         analysis_type: comprehensive, objects, text, landmarks, faces
         """
+        if not self.enabled:
+            logger.warning("Vision服务未启用，返回模拟结果")
+            return {
+                "objects": [],
+                "text": "",
+                "landmarks": [],
+                "labels": [],
+                "faces": [],
+                "error": "Vision服务未启用 - Google Cloud凭据未找到",
+                "enabled": False
+            }
+            
         try:
             image = vision.Image(content=image_content)
-            results = {}
+            results = {"enabled": True}
             
             if analysis_type == "comprehensive" or analysis_type == "all":
                 # 综合分析

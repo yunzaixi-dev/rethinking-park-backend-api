@@ -20,7 +20,20 @@ class StorageService:
         if os.path.exists(self.storage_file):
             try:
                 with open(self.storage_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # 处理旧的数据格式 {"images": [...]}
+                    if isinstance(data, dict) and "images" in data:
+                        if isinstance(data["images"], list):
+                            # 如果是列表格式，转换为字典格式
+                            return {}
+                        else:
+                            # 如果images是字典，直接返回
+                            return data["images"]
+                    # 如果是直接的字典格式，返回
+                    elif isinstance(data, dict):
+                        return data
+                    else:
+                        return {}
             except (json.JSONDecodeError, FileNotFoundError):
                 return {}
         return {}
@@ -38,8 +51,10 @@ class StorageService:
     def _save_data(self):
         """保存数据到文件"""
         try:
+            # 确保保存的格式与加载时期望的格式一致
+            save_data = {"images": self.data}
             with open(self.storage_file, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2, default=str)
+                json.dump(save_data, f, ensure_ascii=False, indent=2, default=str)
         except Exception as e:
             print(f"保存数据失败: {e}")
     

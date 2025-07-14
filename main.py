@@ -88,7 +88,7 @@ async def root():
 async def health_check():
     """健康检查端点"""
     stats = await storage_service.get_stats()
-    cache_stats = await cache_service.get_cache_stats()
+    cache_stats = cache_service.get_stats()
     
     return {
         "status": "healthy",
@@ -326,7 +326,7 @@ async def delete_image_by_hash(request: Request, image_hash: str):
 async def get_stats(request: Request):
     """获取系统统计信息"""
     storage_stats = await storage_service.get_stats()
-    cache_stats = await cache_service.get_cache_stats()
+    cache_stats = cache_service.get_stats()
     
     return {
         "storage": storage_stats,

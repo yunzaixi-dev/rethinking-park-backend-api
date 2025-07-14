@@ -1,24 +1,56 @@
-version: '3.8'
-
 services:
+  # 后端API服务
   api:
     build: .
+    container_name: rethinking-park-api
     ports:
       - "8000:8000"
     environment:
-      - DEBUG=true
+      # 应用配置
+      DEBUG: "true"
+      APP_NAME: "Rethinking Park Backend API"
+      APP_VERSION: "2.0.0"
+      
+      # Google Cloud配置
+      GOOGLE_CLOUD_PROJECT_ID: "${GOOGLE_CLOUD_PROJECT_ID:-rethinking-park-api}"
+      GOOGLE_CLOUD_STORAGE_BUCKET: "${GOOGLE_CLOUD_STORAGE_BUCKET:-rethinking-park-images}"
+      GOOGLE_APPLICATION_CREDENTIALS: "/app/service-account-key.json"
+      
+      # Redis配置 (使用系统Redis)
+      REDIS_ENABLED: "true"
+      REDIS_URL: "redis://host.docker.internal:6379"
+      CACHE_TTL_HOURS: "24"
+      
+      # 功能配置
+      RATE_LIMIT_ENABLED: "true"
+      ENABLE_DUPLICATE_DETECTION: "true"
+      SIMILARITY_THRESHOLD: "5"
+      
+      # CORS配置
+      ALLOWED_ORIGINS: "*"
+    
     volumes:
-      - ./.env:/app/.env:ro
-      - ./service-account-key.json:/app/service-account-key.json:ro
-      - ./image_metadata.json:/app/image_metadata.json
-    restart: unless-stopped
+      # 挂载服务账号密钥文件
+      - "${PWD}/service-account-key.json:/app/service-account-key.json:ro"
+      # 挂载数据存储目录
+      - api_data:/app/data
+    
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 20s
+    
+    restart: unless-stopped
+
+volumes:
+  api_data:
+    driver: local
 
 networks:
   default:
-    name: rethinking-park-network 
+    name: rethinking-park-network

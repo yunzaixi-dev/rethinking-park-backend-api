@@ -4,33 +4,58 @@ from datetime import datetime
 from typing import Tuple, Optional
 from google.cloud import storage
 from google.cloud.exceptions import GoogleCloudError
+from google.auth.exceptions import DefaultCredentialsError
 from PIL import Image
 import io
+import logging
 
 from config import settings
 from services.hash_service import hash_service
+
+logger = logging.getLogger(__name__)
 
 class GCSService:
     """Google Cloud Storage 服务"""
     
     def __init__(self):
-        self.client = storage.Client(project=settings.GOOGLE_CLOUD_PROJECT_ID)
+        self.client = None
         self.bucket_name = settings.GOOGLE_CLOUD_STORAGE_BUCKET
         self.bucket = None
+        self.enabled = False
+        
+        try:
+            # 尝试初始化Google Cloud Storage客户端
+            self.client = storage.Client(project=settings.GOOGLE_CLOUD_PROJECT_ID)
+            self.enabled = True
+            logger.info("Google Cloud Storage客户端初始化成功")
+        except DefaultCredentialsError:
+            logger.warning("Google Cloud凭据未找到，存储功能将被禁用")
+            self.enabled = False
+        except Exception as e:
+            logger.error(f"Google Cloud Storage初始化失败: {e}")
+            self.enabled = False
         
     async def initialize(self):
         """初始化存储桶"""
+        if not self.enabled:
+            logger.info("GCS服务未启用，跳过存储桶初始化")
+            return
+            
         try:
             self.bucket = self.client.bucket(self.bucket_name)
             # 检查存储桶是否存在，如果不存在则创建
             if not self.bucket.exists():
                 self.bucket = self.client.create_bucket(self.bucket_name)
-                print(f"创建存储桶: {self.bucket_name}")
+                logger.info(f"创建存储桶: {self.bucket_name}")
             else:
-                print(f"使用现有存储桶: {self.bucket_name}")
-        except GoogleCloudError as e:
-            print(f"初始化GCS失败: {e}")
-            raise
+                logger.info(f"使用现有存储桶: {self.bucket_name}")
+        except Exception as e:
+            logger.error(f"存储桶初始化失败: {e}")
+            self.enabled = False
+    
+    def is_enabled(self) -> bool:
+        """检查GCS服务是否可用"""
+        return self.enabled
     
     def validate_image(self, file_content: bytes, filename: str) -> Tuple[bool, str]:
         """验证图像文件"""
@@ -60,6 +85,10 @@ class GCSService:
         上传图像到GCS
         返回: (image_id, image_hash, gcs_url, perceptual_hash)
         """
+        if not self.enabled:
+            logger.warning("GCS服务未启用，无法上传图像")
+            raise GoogleCloudError("GCS服务未启用")
+
         try:
             # 计算图像哈希
             md5_hash, perceptual_hash = hash_service.calculate_combined_hash(file_content)
@@ -71,7 +100,7 @@ class GCSService:
             # 检查文件是否已存在
             blob = self.bucket.blob(blob_name)
             if blob.exists():
-                print(f"📋 图像已存在，返回现有链接: {md5_hash[:8]}...")
+                logger.info(f"📋 图像已存在，返回现有链接: {md5_hash[:8]}...")
                 return md5_hash, md5_hash, blob.public_url, perceptual_hash
             
             # 上传新文件
@@ -96,18 +125,22 @@ class GCSService:
             # 设置公开访问权限（如果需要）
             # blob.make_public()
             
-            print(f"✅ 图像上传成功: {md5_hash[:8]}... -> {blob_name}")
+            logger.info(f"✅ 图像上传成功: {md5_hash[:8]}... -> {blob_name}")
             return md5_hash, md5_hash, blob.public_url, perceptual_hash
             
         except GoogleCloudError as e:
-            print(f"GCS上传失败: {e}")
+            logger.error(f"GCS上传失败: {e}")
             raise
         except Exception as e:
-            print(f"上传过程出错: {e}")
+            logger.error(f"上传过程出错: {e}")
             raise
     
     async def get_image_url(self, image_hash: str, file_extension: str = None) -> Optional[str]:
         """通过哈希值获取图像URL"""
+        if not self.enabled:
+            logger.warning("GCS服务未启用，无法获取图像URL")
+            return None
+
         try:
             if file_extension:
                 blob_name = f"images/{image_hash}{file_extension}"
@@ -126,11 +159,15 @@ class GCSService:
             return None
             
         except GoogleCloudError as e:
-            print(f"获取图像URL失败: {e}")
+            logger.error(f"获取图像URL失败: {e}")
             return None
     
     async def download_image(self, image_hash: str, file_extension: str = None) -> Optional[bytes]:
         """通过哈希值下载图像内容"""
+        if not self.enabled:
+            logger.warning("GCS服务未启用，无法下载图像")
+            return None
+
         try:
             if file_extension:
                 blob_name = f"images/{image_hash}{file_extension}"
@@ -148,11 +185,15 @@ class GCSService:
             return None
             
         except GoogleCloudError as e:
-            print(f"下载图像失败: {e}")
+            logger.error(f"下载图像失败: {e}")
             return None
     
     async def delete_image(self, image_hash: str, file_extension: str = None) -> bool:
         """通过哈希值删除图像"""
+        if not self.enabled:
+            logger.warning("GCS服务未启用，无法删除图像")
+            return False
+
         try:
             if file_extension:
                 blob_name = f"images/{image_hash}{file_extension}"
@@ -174,11 +215,15 @@ class GCSService:
             return False
             
         except GoogleCloudError as e:
-            print(f"删除图像失败: {e}")
+            logger.error(f"删除图像失败: {e}")
             return False
     
     async def check_image_exists(self, image_hash: str) -> Tuple[bool, Optional[str]]:
         """检查图像是否已存在于GCS中"""
+        if not self.enabled:
+            logger.warning("GCS服务未启用，无法检查图像存在性")
+            return False, None
+
         try:
             for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
                 blob_name = f"images/{image_hash}{ext}"
@@ -187,7 +232,7 @@ class GCSService:
                     return True, ext
             return False, None
         except Exception as e:
-            print(f"检查图像存在性失败: {e}")
+            logger.error(f"检查图像存在性失败: {e}")
             return False, None
 
 # 创建全局实例

@@ -1,139 +1,114 @@
 import json
-import aioredis
-from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
-import asyncio
+import redis
+import logging
+from typing import Any, Optional
+from datetime import timedelta
 
 from config import settings
 
+logger = logging.getLogger(__name__)
+
 class CacheService:
-    """Redis缓存服务，用于缓存图像分析结果"""
+    """Redis缓存服务"""
     
     def __init__(self):
-        self.redis = None
-        self.cache_enabled = getattr(settings, 'REDIS_ENABLED', True)
-        self.redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379')
-        self.default_ttl = getattr(settings, 'CACHE_TTL_HOURS', 24) * 3600  # 默认24小时
+        self.redis_client = None
+        self.enabled = False
         
-    async def initialize(self):
-        """初始化Redis连接"""
-        if not self.cache_enabled:
-            print("⚠️ 缓存服务已禁用")
-            return
-            
-        try:
-            self.redis = await aioredis.from_url(
-                self.redis_url,
-                encoding="utf-8",
-                decode_responses=True
-            )
-            # 测试连接
-            await self.redis.ping()
-            print("✅ Redis缓存服务初始化成功")
-        except Exception as e:
-            print(f"⚠️ Redis连接失败，缓存功能将禁用: {e}")
-            self.cache_enabled = False
-            self.redis = None
+        if settings.REDIS_ENABLED:
+            try:
+                # 解析Redis URL
+                redis_url = settings.REDIS_URL
+                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                
+                # 测试连接
+                self.redis_client.ping()
+                self.enabled = True
+                logger.info("Redis缓存服务初始化成功")
+            except Exception as e:
+                logger.warning(f"Redis连接失败，缓存功能将被禁用: {e}")
+                self.enabled = False
+        else:
+            logger.info("Redis缓存功能已禁用")
     
-    async def close(self):
-        """关闭Redis连接"""
-        if self.redis:
-            await self.redis.close()
+    def is_enabled(self) -> bool:
+        """检查缓存服务是否可用"""
+        return self.enabled
     
-    def _make_cache_key(self, image_hash: str, analysis_type: str) -> str:
-        """生成缓存键"""
-        return f"analysis:{image_hash}:{analysis_type}"
-    
-    async def get_analysis_result(self, image_hash: str, analysis_type: str) -> Optional[Dict[Any, Any]]:
-        """获取缓存的分析结果"""
-        if not self.cache_enabled or not self.redis:
+    async def get(self, key: str) -> Optional[Any]:
+        """从缓存获取数据"""
+        if not self.enabled:
             return None
             
         try:
-            cache_key = self._make_cache_key(image_hash, analysis_type)
-            cached_data = await self.redis.get(cache_key)
-            
-            if cached_data:
-                result = json.loads(cached_data)
-                print(f"✅ 从缓存获取分析结果: {image_hash[:8]}...{analysis_type}")
-                return result
-                
+            data = self.redis_client.get(key)
+            if data:
+                return json.loads(data)
+            return None
         except Exception as e:
-            print(f"❌ 获取缓存失败: {e}")
-            
-        return None
+            logger.error(f"缓存读取失败: {e}")
+            return None
     
-    async def set_analysis_result(self, image_hash: str, analysis_type: str, result: Dict[Any, Any], ttl: Optional[int] = None) -> bool:
-        """缓存分析结果"""
-        if not self.cache_enabled or not self.redis:
+    async def set(self, key: str, value: Any, ttl_hours: int = None) -> bool:
+        """设置缓存数据"""
+        if not self.enabled:
             return False
             
         try:
-            cache_key = self._make_cache_key(image_hash, analysis_type)
-            cache_data = {
-                "result": result,
-                "cached_at": datetime.now().isoformat(),
-                "analysis_type": analysis_type,
-                "image_hash": image_hash
-            }
+            ttl_hours = ttl_hours or settings.CACHE_TTL_HOURS
+            ttl = timedelta(hours=ttl_hours)
             
-            cache_ttl = ttl or self.default_ttl
-            await self.redis.setex(
-                cache_key,
-                cache_ttl,
-                json.dumps(cache_data, ensure_ascii=False)
-            )
-            
-            print(f"✅ 缓存分析结果: {image_hash[:8]}...{analysis_type} (TTL: {cache_ttl}s)")
+            serialized_value = json.dumps(value, ensure_ascii=False)
+            self.redis_client.setex(key, ttl, serialized_value)
             return True
-            
         except Exception as e:
-            print(f"❌ 设置缓存失败: {e}")
+            logger.error(f"缓存写入失败: {e}")
             return False
     
-    async def delete_analysis_result(self, image_hash: str, analysis_type: str = None) -> bool:
-        """删除缓存的分析结果"""
-        if not self.cache_enabled or not self.redis:
+    async def delete(self, key: str) -> bool:
+        """删除缓存数据"""
+        if not self.enabled:
             return False
             
         try:
-            if analysis_type:
-                # 删除特定类型的分析结果
-                cache_key = self._make_cache_key(image_hash, analysis_type)
-                await self.redis.delete(cache_key)
-            else:
-                # 删除该图像所有类型的分析结果
-                pattern = f"analysis:{image_hash}:*"
-                keys = await self.redis.keys(pattern)
-                if keys:
-                    await self.redis.delete(*keys)
-            
-            print(f"✅ 删除缓存: {image_hash[:8]}...")
-            return True
-            
+            result = self.redis_client.delete(key)
+            return result > 0
         except Exception as e:
-            print(f"❌ 删除缓存失败: {e}")
+            logger.error(f"缓存删除失败: {e}")
             return False
     
-    async def get_cache_stats(self) -> Dict[str, Any]:
+    async def clear_pattern(self, pattern: str) -> int:
+        """根据模式删除缓存"""
+        if not self.enabled:
+            return 0
+            
+        try:
+            keys = self.redis_client.keys(pattern)
+            if keys:
+                return self.redis_client.delete(*keys)
+            return 0
+        except Exception as e:
+            logger.error(f"缓存模式删除失败: {e}")
+            return 0
+    
+    def get_stats(self) -> dict:
         """获取缓存统计信息"""
-        if not self.cache_enabled or not self.redis:
-            return {"enabled": False, "message": "缓存未启用"}
+        if not self.enabled:
+            return {"enabled": False}
             
         try:
-            info = await self.redis.info()
-            keys_count = await self.redis.dbsize()
-            
+            info = self.redis_client.info()
             return {
                 "enabled": True,
-                "connected": True,
-                "total_keys": keys_count,
-                "memory_usage": info.get("used_memory_human", "未知"),
-                "uptime": info.get("uptime_in_seconds", 0),
-                "redis_version": info.get("redis_version", "未知")
+                "used_memory": info.get("used_memory_human", "Unknown"),
+                "connected_clients": info.get("connected_clients", 0),
+                "total_commands_processed": info.get("total_commands_processed", 0),
+                "keyspace_hits": info.get("keyspace_hits", 0),
+                "keyspace_misses": info.get("keyspace_misses", 0)
             }
         except Exception as e:
-            return {"enabled": True, "connected": False, "error": str(e)}
+            logger.error(f"获取缓存统计失败: {e}")
+            return {"enabled": True, "error": str(e)}
 
-# 创建全局实例
-cache_service = CacheService() 
+# 创建全局缓存服务实例
+cache_service = CacheService()
