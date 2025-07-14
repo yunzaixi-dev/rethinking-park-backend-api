@@ -1,175 +1,246 @@
-# Rethinking Park Backend API
+# Rethinking Park Backend API v2.0
 
-智能公园图像分析后端API，基于FastAPI和Google Cloud服务构建。
+智能公园图像分析后端API - 支持图像哈希去重、智能缓存和速率限制的Google Cloud Vision图像分析服务。
 
-## 功能特性
+## 🚀 新功能亮点 (v2.0)
 
-- 🖼️ **图像上传**: 支持多种图像格式的安全上传
-- 🔍 **智能分析**: 使用Google Cloud Vision API进行图像内容分析
-- ☁️ **云存储**: 集成Google Cloud Storage进行图像存储
-- 📊 **元数据管理**: 完整的图像信息和分析结果存储
-- 🚀 **高性能**: 基于FastAPI的异步处理
-- 📝 **自动文档**: 内置Swagger UI和ReDoc文档
+### 1. 📊 图像哈希去重
+- **MD5哈希**: 精确检测完全相同的图像
+- **感知哈希**: 检测视觉相似的图像
+- **自动去重**: 相同图像只存储一次，节省存储空间
+- **相似度检测**: 可配置的相似度阈值
 
-## 主要API端点
+### 2. ⚡ 智能缓存系统
+- **Redis缓存**: 缓存Vision API分析结果
+- **自动缓存**: 首次分析后自动缓存24小时
+- **快速响应**: 缓存命中时响应速度提升10倍+
+- **成本优化**: 避免重复调用昂贵的Vision API
 
-### 1. 图像上传 API
-```
+### 3. 🛡️ API速率限制
+- **分级限制**: 不同API端点有不同的速率限制
+- **IP限制**: 基于客户端IP的访问频率控制
+- **优雅降级**: 超出限制时返回友好错误信息
+- **可配置**: 支持环境变量配置限制策略
+
+### 4. 🔍 基于哈希的API
+- **哈希标识**: 使用图像哈希作为唯一标识符
+- **向后兼容**: 保持对原有ID-based API的支持
+- **重复检测API**: 专门的重复检测端点
+- **批量操作**: 支持基于哈希的批量处理
+
+## 📋 API端点
+
+### 图像上传
+```http
 POST /api/v1/upload
 ```
-- 上传图像文件
-- 返回唯一的图像ID
-- 自动上传到Google Cloud Storage
+- 上传图像并返回哈希值
+- 自动检测重复和相似图像
+- 速率限制: 10次/分钟
 
-### 2. 图像分析 API
-```
+### 图像分析 (基于哈希)
+```http
 POST /api/v1/analyze
-```
-- 使用图像ID进行智能分析
-- 支持多种分析类型（对象检测、文本识别、标签分类等）
-- 返回详细的分析结果
-
-### 其他端点
-- `GET /api/v1/images` - 列出所有图像
-- `GET /api/v1/image/{image_id}` - 获取特定图像信息
-- `DELETE /api/v1/image/{image_id}` - 删除图像
-- `GET /api/v1/stats` - 获取系统统计信息
-- `GET /health` - 健康检查
-
-## 安装和配置
-
-### 1. 克隆项目
-```bash
-cd rethinkingpark-backend-v2
-```
-
-### 2. 安装依赖
-```bash
-pip install -r requirements.txt
-```
-
-### 3. 配置Google Cloud
-
-#### 创建Google Cloud项目
-1. 访问 [Google Cloud Console](https://console.cloud.google.com)
-2. 创建新项目或选择现有项目
-3. 启用以下API：
-   - Cloud Storage API
-   - Cloud Vision API
-
-#### 创建服务账号
-1. 在IAM & Admin > Service Accounts 中创建服务账号
-2. 为服务账号分配以下角色：
-   - Storage Admin
-   - Cloud Vision API User
-3. 创建JSON密钥文件，保存为 `service-account-key.json`
-
-#### 创建Storage存储桶
-```bash
-gsutil mb gs://your-bucket-name
-```
-
-### 4. 环境配置
-复制 `env.example` 为 `.env` 并修改配置：
-```bash
-cp env.example .env
-```
-
-编辑 `.env` 文件：
-```env
-GOOGLE_CLOUD_PROJECT_ID=your-project-id
-GOOGLE_CLOUD_STORAGE_BUCKET=your-bucket-name
-GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
-DEBUG=True
-```
-
-## 运行应用
-
-### 开发模式
-```bash
-python main.py
-```
-或
-```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Docker方式
-```bash
-# 构建镜像
-docker build -t rethinking-park-api .
-
-# 运行容器
-docker run -p 8000:8000 -v $(pwd)/.env:/app/.env -v $(pwd)/service-account-key.json:/app/service-account-key.json rethinking-park-api
-```
-
-## API文档
-
-启动服务后，访问以下地址查看API文档：
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
-## 使用示例
-
-### 上传图像
-```bash
-curl -X POST "http://localhost:8000/api/v1/upload" \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@your-image.jpg"
-```
-
-响应：
-```json
 {
-  "image_id": "uuid-string",
-  "filename": "your-image.jpg",
-  "file_size": 1024000,
-  "content_type": "image/jpeg",
-  "gcs_url": "https://storage.googleapis.com/...",
-  "upload_time": "2024-01-01T12:00:00Z",
-  "status": "uploaded"
+    "image_hash": "abc123def456...",
+    "analysis_type": "labels",
+    "force_refresh": false
+}
+```
+- 使用图像哈希进行分析
+- 自动缓存分析结果
+- 速率限制: 5次/分钟
+
+### 图像分析 (基于ID - 向后兼容)
+```http
+POST /api/v1/analyze-by-id
+{
+    "image_id": "uuid-string",
+    "analysis_type": "labels"
 }
 ```
 
-### 分析图像
-```bash
-curl -X POST "http://localhost:8000/api/v1/analyze" \
-  -H "accept: application/json" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "image_id": "your-image-id",
-    "analysis_type": "comprehensive"
-  }'
+### 重复检测
+```http
+GET /api/v1/check-duplicate/{image_hash}
+```
+- 检查图像是否重复
+- 返回相似图像列表
+
+### 系统统计
+```http
+GET /api/v1/stats
+```
+- 存储统计信息
+- 缓存性能统计
+- 系统配置状态
+
+## 🛠️ 环境配置
+
+### 基础配置
+```env
+# Google Cloud 配置
+GOOGLE_CLOUD_PROJECT_ID=your-project-id
+GOOGLE_CLOUD_STORAGE_BUCKET=your-bucket-name
+GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
+
+# 应用配置
+DEBUG=false
+APP_NAME="Rethinking Park Backend API"
+APP_VERSION="2.0.0"
 ```
 
-## 支持的分析类型
+### Redis缓存配置
+```env
+# Redis缓存配置
+REDIS_ENABLED=true
+REDIS_URL=redis://localhost:6379
+CACHE_TTL_HOURS=24
+```
 
-- `comprehensive` - 综合分析（包含所有类型）
-- `objects` - 对象检测
-- `text` - 文本识别
-- `landmarks` - 地标识别
-- `labels` - 标签分类
-- `faces` - 人脸检测
-- `safety` - 安全内容检测
+### 速率限制配置
+```env
+# 速率限制配置
+RATE_LIMIT_ENABLED=true
+```
 
-## 技术栈
+### 重复检测配置
+```env
+# 图像重复检测配置
+ENABLE_DUPLICATE_DETECTION=true
+SIMILARITY_THRESHOLD=5  # 汉明距离阈值
+```
 
-- **FastAPI** - 现代化的Python Web框架
-- **Google Cloud Storage** - 图像存储
-- **Google Cloud Vision** - 图像分析
-- **Pydantic** - 数据验证
-- **Uvicorn** - ASGI服务器
-- **Docker** - 容器化部署
+## 🚀 快速开始
 
-## 许可证
+### 1. 安装依赖
+```bash
+# 安装Python依赖
+pip install -r requirements.txt
 
-MIT License
+# 安装Redis (Arch Linux)
+sudo pacman -S redis
+# 或使用yay
+yay -S redis
 
-## 贡献
+# 启动Redis
+sudo systemctl start redis
+sudo systemctl enable redis
+```
+
+### 2. 配置环境
+```bash
+# 复制配置文件
+cp env.example .env
+
+# 编辑配置文件
+nano .env
+```
+
+### 3. 启动服务
+```bash
+# 开发模式
+python main.py
+
+# 或使用uvicorn
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 4. 测试功能
+```bash
+# 运行增强功能测试
+python test_enhanced_features.py
+
+# 运行Google Cloud测试
+python test_gcp.py
+```
+
+## 📊 API速率限制
+
+| 端点类型 | 限制 | 说明 |
+|---------|------|------|
+| 上传 | 10次/分钟 | 图像上传API |
+| 分析 | 5次/分钟 | Vision API分析（昂贵） |
+| 查询 | 30次/分钟 | 列表、获取信息等 |
+| 删除 | 5次/分钟 | 删除操作 |
+| 默认 | 20次/分钟, 100次/小时 | 其他API |
+
+## 🎯 性能优化
+
+### 缓存策略
+- **分析结果缓存**: 24小时TTL
+- **重复图像检测**: 避免重复存储
+- **哈希索引**: 快速查找和匹配
+
+### 存储优化
+- **基于哈希的文件名**: 避免重复存储
+- **元数据分离**: 快速查询不下载文件
+- **批量操作**: 支持批量处理
+
+## 🔧 故障排除
+
+### Redis连接问题
+```bash
+# 检查Redis状态
+sudo systemctl status redis
+
+# 测试Redis连接
+redis-cli ping
+```
+
+### 速率限制调试
+- 检查 `RATE_LIMIT_ENABLED` 环境变量
+- 查看API响应头中的限制信息
+- 调整各端点的限制配置
+
+### 缓存问题
+```bash
+# 查看缓存键
+redis-cli keys "analysis:*"
+
+# 清除所有缓存
+redis-cli flushall
+```
+
+## 📝 API文档
+
+启动服务后访问:
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+
+## 🧪 测试
+
+### 单元测试
+```bash
+# Google Cloud配置测试
+python test_gcp.py
+
+# 增强功能测试
+python test_enhanced_features.py
+```
+
+### 手动测试
+```bash
+# 上传图像
+curl -X POST "http://localhost:8000/api/v1/upload" \
+     -H "accept: application/json" \
+     -H "Content-Type: multipart/form-data" \
+     -F "file=@test_image.jpg"
+
+# 分析图像
+curl -X POST "http://localhost:8000/api/v1/analyze" \
+     -H "accept: application/json" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "image_hash": "your-image-hash",
+       "analysis_type": "labels"
+     }'
+```
+
+## 🤝 贡献
 
 欢迎提交Issue和Pull Request！
 
-## 支持
+## �� 许可证
 
-如有问题，请创建Issue或联系开发团队。 
+MIT License 

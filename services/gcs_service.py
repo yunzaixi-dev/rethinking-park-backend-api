@@ -8,6 +8,7 @@ from PIL import Image
 import io
 
 from config import settings
+from services.hash_service import hash_service
 
 class GCSService:
     """Google Cloud Storage 服务"""
@@ -49,102 +50,145 @@ class GCSService:
                 image.verify()  # 验证图像完整性
                 return True, "验证通过"
             except Exception as e:
-                return False, f"无效的图像文件: {str(e)}"
+                return False, f"图像格式无效: {str(e)}"
                 
         except Exception as e:
             return False, f"验证失败: {str(e)}"
     
-    async def upload_image(self, file_content: bytes, filename: str, content_type: str) -> Tuple[str, str]:
+    async def upload_image(self, file_content: bytes, filename: str, content_type: str) -> Tuple[str, str, str, Optional[str]]:
         """
         上传图像到GCS
-        返回: (image_id, gcs_url)
+        返回: (image_id, image_hash, gcs_url, perceptual_hash)
         """
         try:
-            if not self.bucket:
-                await self.initialize()
+            # 计算图像哈希
+            md5_hash, perceptual_hash = hash_service.calculate_combined_hash(file_content)
             
-            # 生成唯一的图像ID和文件名
-            image_id = str(uuid.uuid4())
+            # 使用哈希值作为文件名，保证相同图像只存储一次
             file_ext = os.path.splitext(filename)[1].lower()
-            gcs_filename = f"images/{datetime.now().strftime('%Y/%m/%d')}/{image_id}{file_ext}"
+            blob_name = f"images/{md5_hash}{file_ext}"
             
-            # 创建blob并上传
-            blob = self.bucket.blob(gcs_filename)
+            # 检查文件是否已存在
+            blob = self.bucket.blob(blob_name)
+            if blob.exists():
+                print(f"📋 图像已存在，返回现有链接: {md5_hash[:8]}...")
+                return md5_hash, md5_hash, blob.public_url, perceptual_hash
+            
+            # 上传新文件
             blob.upload_from_string(
                 file_content,
                 content_type=content_type
             )
             
-            # 设置blob为公开可读（可选）
+            # 设置元数据
+            metadata = {
+                'original_filename': filename,
+                'upload_time': datetime.now().isoformat(),
+                'md5_hash': md5_hash,
+                'file_size': str(len(file_content))
+            }
+            if perceptual_hash:
+                metadata['perceptual_hash'] = perceptual_hash
+            
+            blob.metadata = metadata
+            blob.patch()
+            
+            # 设置公开访问权限（如果需要）
             # blob.make_public()
             
-            # 生成签名URL（有效期1小时）
-            gcs_url = blob.generate_signed_url(
-                expiration=datetime.now().timestamp() + 3600,
-                method='GET'
-            )
-            
-            return image_id, gcs_url
+            print(f"✅ 图像上传成功: {md5_hash[:8]}... -> {blob_name}")
+            return md5_hash, md5_hash, blob.public_url, perceptual_hash
             
         except GoogleCloudError as e:
-            raise Exception(f"上传到GCS失败: {str(e)}")
+            print(f"GCS上传失败: {e}")
+            raise
         except Exception as e:
-            raise Exception(f"上传图像失败: {str(e)}")
+            print(f"上传过程出错: {e}")
+            raise
     
-    async def get_image_url(self, image_id: str) -> Optional[str]:
-        """根据图像ID获取访问URL"""
+    async def get_image_url(self, image_hash: str, file_extension: str = None) -> Optional[str]:
+        """通过哈希值获取图像URL"""
         try:
-            if not self.bucket:
-                await self.initialize()
+            if file_extension:
+                blob_name = f"images/{image_hash}{file_extension}"
+            else:
+                # 尝试常见的图像格式
+                for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
+                    blob_name = f"images/{image_hash}{ext}"
+                    blob = self.bucket.blob(blob_name)
+                    if blob.exists():
+                        return blob.public_url
+                return None
             
-            # 查找对应的blob
-            blobs = list(self.bucket.list_blobs(prefix=f"images/"))
-            for blob in blobs:
-                if image_id in blob.name:
-                    return blob.generate_signed_url(
-                        expiration=datetime.now().timestamp() + 3600,
-                        method='GET'
-                    )
+            blob = self.bucket.blob(blob_name)
+            if blob.exists():
+                return blob.public_url
             return None
             
-        except Exception as e:
+        except GoogleCloudError as e:
             print(f"获取图像URL失败: {e}")
             return None
     
-    async def download_image(self, image_id: str) -> Optional[bytes]:
-        """下载图像内容用于分析"""
+    async def download_image(self, image_hash: str, file_extension: str = None) -> Optional[bytes]:
+        """通过哈希值下载图像内容"""
         try:
-            if not self.bucket:
-                await self.initialize()
-            
-            # 查找对应的blob
-            blobs = list(self.bucket.list_blobs(prefix=f"images/"))
-            for blob in blobs:
-                if image_id in blob.name:
+            if file_extension:
+                blob_name = f"images/{image_hash}{file_extension}"
+                blob = self.bucket.blob(blob_name)
+                if blob.exists():
                     return blob.download_as_bytes()
+            else:
+                # 尝试常见的图像格式
+                for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
+                    blob_name = f"images/{image_hash}{ext}"
+                    blob = self.bucket.blob(blob_name)
+                    if blob.exists():
+                        return blob.download_as_bytes()
+            
             return None
             
-        except Exception as e:
+        except GoogleCloudError as e:
             print(f"下载图像失败: {e}")
             return None
     
-    async def delete_image(self, image_id: str) -> bool:
-        """删除图像"""
+    async def delete_image(self, image_hash: str, file_extension: str = None) -> bool:
+        """通过哈希值删除图像"""
         try:
-            if not self.bucket:
-                await self.initialize()
-            
-            # 查找并删除对应的blob
-            blobs = list(self.bucket.list_blobs(prefix=f"images/"))
-            for blob in blobs:
-                if image_id in blob.name:
+            if file_extension:
+                blob_name = f"images/{image_hash}{file_extension}"
+                blob = self.bucket.blob(blob_name)
+                if blob.exists():
                     blob.delete()
                     return True
+            else:
+                # 尝试删除所有可能的格式
+                deleted = False
+                for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
+                    blob_name = f"images/{image_hash}{ext}"
+                    blob = self.bucket.blob(blob_name)
+                    if blob.exists():
+                        blob.delete()
+                        deleted = True
+                return deleted
+            
             return False
             
-        except Exception as e:
+        except GoogleCloudError as e:
             print(f"删除图像失败: {e}")
             return False
+    
+    async def check_image_exists(self, image_hash: str) -> Tuple[bool, Optional[str]]:
+        """检查图像是否已存在于GCS中"""
+        try:
+            for ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
+                blob_name = f"images/{image_hash}{ext}"
+                blob = self.bucket.blob(blob_name)
+                if blob.exists():
+                    return True, ext
+            return False, None
+        except Exception as e:
+            print(f"检查图像存在性失败: {e}")
+            return False, None
 
-# 全局GCS服务实例
+# 创建全局实例
 gcs_service = GCSService() 
