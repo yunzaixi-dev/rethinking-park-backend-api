@@ -12,6 +12,17 @@ import uuid
 
 from config import settings
 from .vision_service import VisionService
+from .face_detection_service import FaceDetectionService
+from models.image import (
+    EnhancedDetectionResult,
+    EnhancedDetectionRequest,
+    EnhancedDetectionResponse,
+    FaceDetectionResult,
+    BoundingBox,
+    Point,
+    NaturalElementsResult,
+    ColorInfo
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,58 +34,96 @@ class EnhancedVisionService(VisionService):
         self.default_font_size = 16
         self.face_marker_radius = 8
         self.box_thickness = 2
+        self.face_detection_service = FaceDetectionService()
         
     async def detect_objects_enhanced(
         self, 
         image_content: bytes, 
+        image_hash: str,
         include_faces: bool = True,
         include_labels: bool = True,
         confidence_threshold: float = 0.5,
         max_results: int = 50
-    ) -> Dict[str, Any]:
+    ) -> EnhancedDetectionResponse:
         """
         Enhanced object detection with precise bounding boxes and confidence scores
         """
         if not self.enabled:
-            return {
-                "objects": [],
-                "faces": [],
-                "labels": [],
-                "error": "Vision service not enabled",
-                "enabled": False
-            }
+            return EnhancedDetectionResponse(
+                image_hash=image_hash,
+                objects=[],
+                faces=[],
+                labels=[],
+                detection_time=datetime.now(),
+                success=False,
+                enabled=False,
+                error_message="Vision service not enabled"
+            )
             
         try:
             image = vision.Image(content=image_content)
-            results = {"enabled": True, "detection_time": datetime.now().isoformat()}
             
             # Enhanced object detection
             objects = await self._detect_objects_enhanced(image, confidence_threshold, max_results)
-            results["objects"] = objects
             
-            # Face detection with positions
+            # Face detection with positions using specialized service
+            faces = []
             if include_faces:
-                faces = await self._detect_faces_enhanced(image)
-                results["faces"] = faces
+                face_response = await self.face_detection_service.detect_faces_enhanced(
+                    image_content, 
+                    include_demographics=False,
+                    anonymize_results=True,
+                    confidence_threshold=confidence_threshold
+                )
+                faces = face_response.faces
             
             # Label detection for context
+            labels = []
             if include_labels:
                 labels = await self._detect_labels_enhanced(image, confidence_threshold)
-                results["labels"] = labels
             
-            return results
+            return EnhancedDetectionResponse(
+                image_hash=image_hash,
+                objects=objects,
+                faces=faces,
+                labels=labels,
+                detection_time=datetime.now(),
+                success=True,
+                enabled=True,
+                error_message=None
+            )
             
         except GoogleCloudError as e:
-            raise Exception(f"Google Cloud Vision API error: {str(e)}")
+            logger.error(f"Google Cloud Vision API error: {e}")
+            return EnhancedDetectionResponse(
+                image_hash=image_hash,
+                objects=[],
+                faces=[],
+                labels=[],
+                detection_time=datetime.now(),
+                success=False,
+                enabled=True,
+                error_message=f"Vision API error: {str(e)}"
+            )
         except Exception as e:
-            raise Exception(f"Enhanced object detection failed: {str(e)}")
+            logger.error(f"Enhanced object detection failed: {e}")
+            return EnhancedDetectionResponse(
+                image_hash=image_hash,
+                objects=[],
+                faces=[],
+                labels=[],
+                detection_time=datetime.now(),
+                success=False,
+                enabled=True,
+                error_message=f"Detection error: {str(e)}"
+            )
     
     async def _detect_objects_enhanced(
         self, 
         image: vision.Image, 
         confidence_threshold: float = 0.5,
         max_results: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> List[EnhancedDetectionResult]:
         """Enhanced object detection with detailed bounding box information"""
         try:
             response = self.client.object_localization(image=image)
@@ -90,7 +139,7 @@ class EnhancedVisionService(VisionService):
                 y_coords = []
                 
                 for vertex in obj.bounding_poly.normalized_vertices:
-                    vertices.append({"x": vertex.x, "y": vertex.y})
+                    vertices.append(Point(x=vertex.x, y=vertex.y))
                     x_coords.append(vertex.x)
                     y_coords.append(vertex.y)
                 
@@ -102,23 +151,29 @@ class EnhancedVisionService(VisionService):
                 center_x = min_x + width / 2
                 center_y = min_y + height / 2
                 
-                objects.append({
-                    "object_id": f"obj_{idx}_{uuid.uuid4().hex[:8]}",
-                    "class_name": obj.name,
-                    "confidence": float(obj.score),
-                    "bounding_box": {
-                        "normalized_vertices": vertices,
-                        "x": float(min_x),
-                        "y": float(min_y),
-                        "width": float(width),
-                        "height": float(height)
-                    },
-                    "center_point": {
-                        "x": float(center_x),
-                        "y": float(center_y)
-                    },
-                    "area_percentage": float(width * height * 100)
-                })
+                # Create bounding box model
+                bounding_box = BoundingBox(
+                    x=float(min_x),
+                    y=float(min_y),
+                    width=float(width),
+                    height=float(height),
+                    normalized_vertices=vertices
+                )
+                
+                # Create center point model
+                center_point = Point(x=float(center_x), y=float(center_y))
+                
+                # Create enhanced detection result
+                detection_result = EnhancedDetectionResult(
+                    object_id=f"obj_{idx}_{uuid.uuid4().hex[:8]}",
+                    class_name=obj.name,
+                    confidence=float(obj.score),
+                    bounding_box=bounding_box,
+                    center_point=center_point,
+                    area_percentage=float(width * height * 100)
+                )
+                
+                objects.append(detection_result)
                 
                 if len(objects) >= max_results:
                     break
@@ -129,56 +184,7 @@ class EnhancedVisionService(VisionService):
             logger.error(f"Enhanced object detection failed: {e}")
             return []
     
-    async def _detect_faces_enhanced(self, image: vision.Image) -> List[Dict[str, Any]]:
-        """Enhanced face detection with position marking"""
-        try:
-            response = self.client.face_detection(image=image)
-            faces = []
-            
-            for idx, face in enumerate(response.face_annotations):
-                # Calculate face bounding box
-                vertices = []
-                x_coords = []
-                y_coords = []
-                
-                for vertex in face.bounding_poly.vertices:
-                    vertices.append({"x": vertex.x, "y": vertex.y})
-                    x_coords.append(vertex.x)
-                    y_coords.append(vertex.y)
-                
-                # Calculate center point for marker placement
-                min_x, max_x = min(x_coords), max(x_coords)
-                min_y, max_y = min(y_coords), max(y_coords)
-                center_x = (min_x + max_x) / 2
-                center_y = (min_y + max_y) / 2
-                
-                faces.append({
-                    "face_id": f"face_{idx}_{uuid.uuid4().hex[:8]}",
-                    "bounding_box": {
-                        "vertices": vertices,
-                        "x": min_x,
-                        "y": min_y,
-                        "width": max_x - min_x,
-                        "height": max_y - min_y
-                    },
-                    "center_point": {
-                        "x": center_x,
-                        "y": center_y
-                    },
-                    "confidence": float(face.detection_confidence),
-                    "emotions": {
-                        "joy": face.joy_likelihood.name,
-                        "sorrow": face.sorrow_likelihood.name,
-                        "anger": face.anger_likelihood.name,
-                        "surprise": face.surprise_likelihood.name
-                    }
-                })
-            
-            return faces
-            
-        except Exception as e:
-            logger.error(f"Enhanced face detection failed: {e}")
-            return []
+
     
     async def _detect_labels_enhanced(
         self, 
@@ -356,6 +362,164 @@ class EnhancedVisionService(VisionService):
         except Exception as e:
             logger.error(f"Vegetation health calculation failed: {e}")
             return None
+    
+    def apply_confidence_filtering(
+        self, 
+        objects: List[EnhancedDetectionResult], 
+        faces: List[FaceDetectionResult],
+        labels: List[Dict[str, Any]],
+        confidence_threshold: float = 0.5
+    ) -> Tuple[List[EnhancedDetectionResult], List[FaceDetectionResult], List[Dict[str, Any]]]:
+        """
+        Apply confidence-based filtering to detection results
+        """
+        # Filter objects by confidence
+        filtered_objects = [obj for obj in objects if obj.confidence >= confidence_threshold]
+        
+        # Filter faces by confidence
+        filtered_faces = [face for face in faces if face.confidence >= confidence_threshold]
+        
+        # Filter labels by confidence
+        filtered_labels = [label for label in labels if label.get("confidence", 0.0) >= confidence_threshold]
+        
+        return filtered_objects, filtered_faces, filtered_labels
+    
+    def calculate_detection_quality_metrics(
+        self, 
+        objects: List[EnhancedDetectionResult], 
+        faces: List[FaceDetectionResult]
+    ) -> Dict[str, Any]:
+        """
+        Calculate quality metrics for detection results
+        """
+        metrics = {
+            "total_objects": len(objects),
+            "total_faces": len(faces),
+            "object_confidence_stats": {},
+            "face_confidence_stats": {},
+            "detection_quality_score": 0.0
+        }
+        
+        # Calculate object confidence statistics
+        if objects:
+            object_confidences = [obj.confidence for obj in objects]
+            metrics["object_confidence_stats"] = {
+                "mean": sum(object_confidences) / len(object_confidences),
+                "min": min(object_confidences),
+                "max": max(object_confidences),
+                "high_confidence_count": len([c for c in object_confidences if c >= 0.8]),
+                "medium_confidence_count": len([c for c in object_confidences if 0.5 <= c < 0.8]),
+                "low_confidence_count": len([c for c in object_confidences if c < 0.5])
+            }
+        
+        # Calculate face confidence statistics
+        if faces:
+            face_confidences = [face.confidence for face in faces]
+            metrics["face_confidence_stats"] = {
+                "mean": sum(face_confidences) / len(face_confidences),
+                "min": min(face_confidences),
+                "max": max(face_confidences),
+                "high_confidence_count": len([c for c in face_confidences if c >= 0.8]),
+                "medium_confidence_count": len([c for c in face_confidences if 0.5 <= c < 0.8]),
+                "low_confidence_count": len([c for c in face_confidences if c < 0.5])
+            }
+        
+        # Calculate overall detection quality score
+        total_detections = len(objects) + len(faces)
+        if total_detections > 0:
+            all_confidences = [obj.confidence for obj in objects] + [face.confidence for face in faces]
+            average_confidence = sum(all_confidences) / len(all_confidences)
+            high_confidence_ratio = len([c for c in all_confidences if c >= 0.8]) / total_detections
+            
+            # Quality score based on average confidence and high confidence ratio
+            metrics["detection_quality_score"] = (average_confidence * 0.6 + high_confidence_ratio * 0.4) * 100
+        
+        return metrics
+    
+    async def detect_with_position_marking(
+        self, 
+        image_content: bytes, 
+        image_hash: str,
+        confidence_threshold: float = 0.5,
+        max_results: int = 50
+    ) -> Dict[str, Any]:
+        """
+        Enhanced detection with precise position marking functionality
+        Combines object detection and face detection with position coordinates
+        """
+        try:
+            # Perform enhanced detection
+            detection_response = await self.detect_objects_enhanced(
+                image_content=image_content,
+                image_hash=image_hash,
+                include_faces=True,
+                include_labels=True,
+                confidence_threshold=confidence_threshold,
+                max_results=max_results
+            )
+            
+            if not detection_response.success:
+                return {
+                    "success": False,
+                    "error": detection_response.error_message,
+                    "enabled": detection_response.enabled
+                }
+            
+            # Apply confidence filtering
+            filtered_objects, filtered_faces, filtered_labels = self.apply_confidence_filtering(
+                detection_response.objects,
+                detection_response.faces,
+                detection_response.labels,
+                confidence_threshold
+            )
+            
+            # Calculate quality metrics
+            quality_metrics = self.calculate_detection_quality_metrics(filtered_objects, filtered_faces)
+            
+            # Prepare position marking data
+            position_data = {
+                "objects_with_positions": [
+                    {
+                        "object_id": obj.object_id,
+                        "class_name": obj.class_name,
+                        "confidence": obj.confidence,
+                        "center_point": {"x": obj.center_point.x, "y": obj.center_point.y},
+                        "bounding_box": {
+                            "x": obj.bounding_box.x,
+                            "y": obj.bounding_box.y,
+                            "width": obj.bounding_box.width,
+                            "height": obj.bounding_box.height
+                        }
+                    } for obj in filtered_objects
+                ],
+                "faces_with_positions": [
+                    {
+                        "face_id": face.face_id,
+                        "confidence": face.confidence,
+                        "center_point": {"x": face.center_point.x, "y": face.center_point.y},
+                        "marker_style": "yellow_dot",
+                        "anonymized": face.anonymized
+                    } for face in filtered_faces
+                ]
+            }
+            
+            return {
+                "success": True,
+                "image_hash": image_hash,
+                "detection_time": detection_response.detection_time.isoformat(),
+                "position_data": position_data,
+                "quality_metrics": quality_metrics,
+                "labels": filtered_labels,
+                "enabled": True
+            }
+            
+        except Exception as e:
+            logger.error(f"Position marking detection failed: {e}")
+            return {
+                "success": False,
+                "error": f"Position marking failed: {str(e)}",
+                "enabled": self.enabled
+            }
 
 # Global enhanced vision service instance
 enhanced_vision_service = EnhancedVisionService()
