@@ -1,0 +1,214 @@
+# Production deployment configuration for enhanced image processing system
+# Optimized for no-GPU environment with Google Cloud Vision API
+
+version: '3.8'
+
+services:
+  # Main API service
+  rethinking-park-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - ENVIRONMENT=production
+    image: rethinking-park-api:production
+    container_name: rethinking-park-api-prod
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Application settings
+      - APP_ENV=production
+      - APP_NAME=Rethinking Park API
+      - APP_VERSION=1.0.0
+      - DEBUG=false
+      
+      # API configuration
+      - API_V1_STR=/api/v1
+      - ALLOWED_ORIGINS=https://your-frontend-domain.com,https://api.your-domain.com
+      
+      # Google Cloud configuration
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account-key.json
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}
+      
+      # Redis configuration
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_HOURS=24
+      
+      # Rate limiting
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_PER_MINUTE=60
+      - RATE_LIMIT_BURST=10
+      
+      # Performance optimization
+      - PERFORMANCE_OPTIMIZATION_ENABLED=true
+      - MAX_CONCURRENT_OPERATIONS=10
+      - BATCH_PROCESSING_ENABLED=true
+      - MEMORY_OPTIMIZATION_ENABLED=true
+      - MAX_MEMORY_MB=1024
+      
+      # Monitoring and logging
+      - LOG_LEVEL=INFO
+      - ENABLE_METRICS=true
+      - ENABLE_HEALTH_CHECKS=true
+      
+    volumes:
+      - ../service-account-key.json:/app/service-account-key.json:ro
+      - api_logs:/app/logs
+      - api_cache:/app/cache
+    depends_on:
+      - redis
+      - monitoring
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Redis cache service
+  redis:
+    image: redis:7-alpine
+    container_name: rethinking-park-redis-prod
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Nginx reverse proxy and CDN
+  nginx:
+    image: nginx:alpine
+    container_name: rethinking-park-nginx-prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_cache:/var/cache/nginx
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - rethinking-park-api
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
+  # Monitoring and metrics collection
+  monitoring:
+    image: prom/prometheus:latest
+    container_name: rethinking-park-monitoring-prod
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  # Log aggregation
+  log_aggregator:
+    image: fluent/fluent-bit:latest
+    container_name: rethinking-park-logs-prod
+    restart: unless-stopped
+    volumes:
+      - ./fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - api_logs:/var/log/api:ro
+      - nginx_logs:/var/log/nginx:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    networks:
+      - app_network
+    depends_on:
+      - rethinking-park-api
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+networks:
+  app_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  api_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+  nginx_cache:
+    driver: local
+  api_cache:
+    driver: local

@@ -13,6 +13,14 @@ import uuid
 from config import settings
 from .vision_service import VisionService
 from .face_detection_service import FaceDetectionService
+from .error_handling import (
+    VisionAPIException,
+    ProcessingException,
+    retry_vision_api,
+    retry_processing,
+    handle_vision_api_error,
+    handle_processing_error
+)
 from models.image import (
     EnhancedDetectionResult,
     EnhancedDetectionRequest,
@@ -36,6 +44,7 @@ class EnhancedVisionService(VisionService):
         self.box_thickness = 2
         self.face_detection_service = FaceDetectionService()
         
+    @retry_vision_api(max_attempts=3, base_delay=1.0)
     async def detect_objects_enhanced(
         self, 
         image_content: bytes, 
@@ -63,24 +72,32 @@ class EnhancedVisionService(VisionService):
         try:
             image = vision.Image(content=image_content)
             
-            # Enhanced object detection
-            objects = await self._detect_objects_enhanced(image, confidence_threshold, max_results)
+            # Enhanced object detection with retry
+            objects = await self._detect_objects_enhanced_with_retry(image, confidence_threshold, max_results)
             
             # Face detection with positions using specialized service
             faces = []
             if include_faces:
-                face_response = await self.face_detection_service.detect_faces_enhanced(
-                    image_content, 
-                    include_demographics=False,
-                    anonymize_results=True,
-                    confidence_threshold=confidence_threshold
-                )
-                faces = face_response.faces
+                try:
+                    face_response = await self.face_detection_service.detect_faces_enhanced(
+                        image_content, 
+                        include_demographics=False,
+                        anonymize_results=True,
+                        confidence_threshold=confidence_threshold
+                    )
+                    faces = face_response.faces
+                except Exception as face_error:
+                    logger.warning(f"Face detection failed, continuing without faces: {face_error}")
+                    # Continue without faces rather than failing completely
             
             # Label detection for context
             labels = []
             if include_labels:
-                labels = await self._detect_labels_enhanced(image, confidence_threshold)
+                try:
+                    labels = await self._detect_labels_enhanced_with_retry(image, confidence_threshold)
+                except Exception as label_error:
+                    logger.warning(f"Label detection failed, continuing without labels: {label_error}")
+                    # Continue without labels rather than failing completely
             
             return EnhancedDetectionResponse(
                 image_hash=image_hash,
@@ -93,8 +110,11 @@ class EnhancedVisionService(VisionService):
                 error_message=None
             )
             
-        except GoogleCloudError as e:
-            logger.error(f"Google Cloud Vision API error: {e}")
+        except (GoogleCloudError, VisionAPIException) as e:
+            # Handle Vision API errors with proper error recovery
+            error_info = handle_vision_api_error(e, image_hash)
+            logger.error(f"Vision API error after retries: {error_info}")
+            
             return EnhancedDetectionResponse(
                 image_hash=image_hash,
                 objects=[],
@@ -103,10 +123,13 @@ class EnhancedVisionService(VisionService):
                 detection_time=datetime.now(),
                 success=False,
                 enabled=True,
-                error_message=f"Vision API error: {str(e)}"
+                error_message=error_info.get("message", str(e))
             )
         except Exception as e:
-            logger.error(f"Enhanced object detection failed: {e}")
+            # Handle other processing errors
+            error_info = handle_processing_error(e, "enhanced_detection", image_hash=image_hash)
+            logger.error(f"Enhanced detection error: {error_info}")
+            
             return EnhancedDetectionResponse(
                 image_hash=image_hash,
                 objects=[],
@@ -115,16 +138,17 @@ class EnhancedVisionService(VisionService):
                 detection_time=datetime.now(),
                 success=False,
                 enabled=True,
-                error_message=f"Detection error: {str(e)}"
+                error_message=error_info.get("message", str(e))
             )
     
-    async def _detect_objects_enhanced(
+    @retry_vision_api(max_attempts=2, base_delay=0.5)
+    async def _detect_objects_enhanced_with_retry(
         self, 
         image: vision.Image, 
         confidence_threshold: float = 0.5,
         max_results: int = 50
     ) -> List[EnhancedDetectionResult]:
-        """Enhanced object detection with detailed bounding box information"""
+        """Enhanced object detection with detailed bounding box information and retry logic"""
         try:
             response = self.client.object_localization(image=image)
             objects = []
@@ -180,18 +204,35 @@ class EnhancedVisionService(VisionService):
             
             return objects
             
+        except GoogleCloudError as e:
+            logger.error(f"Google Cloud Vision API error in object detection: {e}")
+            raise VisionAPIException(f"Object detection failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Enhanced object detection failed: {e}")
+            raise ProcessingException(f"Object detection processing failed: {str(e)}", "object_detection")
+
+    async def _detect_objects_enhanced(
+        self, 
+        image: vision.Image, 
+        confidence_threshold: float = 0.5,
+        max_results: int = 50
+    ) -> List[EnhancedDetectionResult]:
+        """Enhanced object detection with detailed bounding box information (legacy method)"""
+        try:
+            return await self._detect_objects_enhanced_with_retry(image, confidence_threshold, max_results)
         except Exception as e:
             logger.error(f"Enhanced object detection failed: {e}")
             return []
     
 
     
-    async def _detect_labels_enhanced(
+    @retry_vision_api(max_attempts=2, base_delay=0.5)
+    async def _detect_labels_enhanced_with_retry(
         self, 
         image: vision.Image, 
         confidence_threshold: float = 0.5
     ) -> List[Dict[str, Any]]:
-        """Enhanced label detection with confidence filtering"""
+        """Enhanced label detection with confidence filtering and retry logic"""
         try:
             response = self.client.label_detection(image=image)
             labels = []
@@ -206,6 +247,21 @@ class EnhancedVisionService(VisionService):
             
             return labels
             
+        except GoogleCloudError as e:
+            logger.error(f"Google Cloud Vision API error in label detection: {e}")
+            raise VisionAPIException(f"Label detection failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Enhanced label detection failed: {e}")
+            raise ProcessingException(f"Label detection processing failed: {str(e)}", "label_detection")
+
+    async def _detect_labels_enhanced(
+        self, 
+        image: vision.Image, 
+        confidence_threshold: float = 0.5
+    ) -> List[Dict[str, Any]]:
+        """Enhanced label detection with confidence filtering (legacy method)"""
+        try:
+            return await self._detect_labels_enhanced_with_retry(image, confidence_threshold)
         except Exception as e:
             logger.error(f"Enhanced label detection failed: {e}")
             return []

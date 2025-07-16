@@ -1,0 +1,106 @@
+# Prometheus configuration for monitoring enhanced image processing API
+# Optimized for production no-GPU environment
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'rethinking-park-monitor'
+    environment: 'production'
+
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  - "alert_rules.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 30s
+    metrics_path: /metrics
+
+  # Main API application metrics
+  - job_name: 'rethinking-park-api'
+    static_configs:
+      - targets: ['rethinking-park-api:8000']
+    scrape_interval: 15s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # Performance optimization metrics
+  - job_name: 'api-performance'
+    static_configs:
+      - targets: ['rethinking-park-api:8000']
+    scrape_interval: 10s
+    metrics_path: /api/v1/performance-metrics
+    scrape_timeout: 5s
+    honor_labels: true
+
+  # Redis metrics (if redis_exporter is available)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Nginx metrics (if nginx-prometheus-exporter is available)
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['nginx:9113']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # System metrics (if node_exporter is available)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    scrape_timeout: 10s
+
+  # Google Cloud Vision API usage metrics (custom endpoint)
+  - job_name: 'vision-api-usage'
+    static_configs:
+      - targets: ['rethinking-park-api:8000']
+    scrape_interval: 60s
+    metrics_path: /api/v1/vision-api-metrics
+    scrape_timeout: 15s
+    honor_labels: true
+
+  # Cache performance metrics
+  - job_name: 'cache-performance'
+    static_configs:
+      - targets: ['rethinking-park-api:8000']
+    scrape_interval: 30s
+    metrics_path: /api/v1/cache-metrics
+    scrape_timeout: 10s
+    honor_labels: true
+
+  # Batch processing metrics
+  - job_name: 'batch-processing'
+    static_configs:
+      - targets: ['rethinking-park-api:8000']
+    scrape_interval: 30s
+    metrics_path: /api/v1/batch-metrics
+    scrape_timeout: 10s
+    honor_labels: true
+
+# Remote write configuration (for external monitoring services)
+# remote_write:
+#   - url: "https://your-monitoring-service.com/api/v1/write"
+#     basic_auth:
+#       username: "your-username"
+#       password: "your-password"

@@ -290,6 +290,108 @@ class LabelAnalysisResponse(BaseModel):
     from_cache: bool = Field(default=False, description="结果是否来自缓存")
     error_message: Optional[str] = Field(default=None, description="错误信息")
 
+class AnnotationStyle(BaseModel):
+    """注释样式配置模型"""
+    face_marker_color: str = Field(default="#FFD700", description="人脸标记颜色（十六进制）")
+    face_marker_radius: int = Field(default=8, description="人脸标记半径", ge=3, le=20)
+    box_color: str = Field(default="#FFFFFF", description="边界框颜色（十六进制）")
+    box_thickness: int = Field(default=2, description="边界框线条粗细", ge=1, le=10)
+    label_color: str = Field(default="#0066CC", description="标签文字颜色（十六进制）")
+    label_font_size: int = Field(default=16, description="标签字体大小", ge=10, le=32)
+    connection_line_color: str = Field(default="#0066CC", description="连接线颜色（十六进制）")
+    connection_line_width: int = Field(default=1, description="连接线宽度", ge=1, le=5)
+    text_background_color: str = Field(default="#FFFFFF", description="文字背景颜色（十六进制）")
+    text_background_alpha: int = Field(default=180, description="文字背景透明度", ge=0, le=255)
+
+class AnnotatedImageRequest(BaseModel):
+    """带注释图像下载请求模型"""
+    image_hash: str = Field(..., description="图像哈希值")
+    include_face_markers: bool = Field(default=True, description="是否包含人脸标记")
+    include_object_boxes: bool = Field(default=True, description="是否包含对象边界框")
+    include_labels: bool = Field(default=True, description="是否包含标签")
+    output_format: str = Field(default="png", description="输出格式", pattern="^(png|jpg|webp)$")
+    quality: int = Field(default=95, description="输出质量（1-100）", ge=1, le=100)
+    annotation_style: Optional[AnnotationStyle] = Field(default=None, description="自定义注释样式")
+    confidence_threshold: float = Field(default=0.5, description="检测置信度阈值", ge=0.0, le=1.0)
+    max_objects: int = Field(default=50, description="最大对象数量", ge=1, le=100)
+
+class AnnotatedImageResult(BaseModel):
+    """带注释图像结果模型"""
+    annotated_image_url: str = Field(..., description="带注释图像的GCS URL")
+    original_image_url: str = Field(..., description="原始图像的GCS URL")
+    annotation_stats: Dict[str, Any] = Field(..., description="注释统计信息")
+    file_size: int = Field(..., description="注释图像文件大小（字节）")
+    format: str = Field(..., description="输出格式")
+    image_size: ImageSize = Field(..., description="图像尺寸")
+
+class AnnotatedImageResponse(BaseModel):
+    """带注释图像下载响应模型"""
+    image_hash: str = Field(..., description="图像哈希值")
+    annotation_id: str = Field(..., description="注释任务唯一标识符")
+    result: Optional[AnnotatedImageResult] = Field(default=None, description="注释结果")
+    processing_time_ms: int = Field(..., description="处理时间（毫秒）")
+    success: bool = Field(default=True, description="注释是否成功")
+    from_cache: bool = Field(default=False, description="结果是否来自缓存")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+
+class BatchOperationRequest(BaseModel):
+    """批处理操作请求模型"""
+    type: str = Field(..., description="操作类型", pattern="^(detect_objects|extract_object|analyze_labels|analyze_nature|annotate_image)$")
+    image_hash: str = Field(..., description="图像哈希值")
+    parameters: Dict[str, Any] = Field(default={}, description="操作参数")
+    max_retries: int = Field(default=2, description="最大重试次数", ge=0, le=5)
+
+class BatchProcessingRequest(BaseModel):
+    """批处理请求模型"""
+    operations: List[BatchOperationRequest] = Field(..., description="操作列表", min_items=1, max_items=50)
+    callback_url: Optional[str] = Field(default=None, description="完成回调URL")
+    max_concurrent_operations: int = Field(default=10, description="最大并发操作数", ge=1, le=10)
+
+class BatchOperationResult(BaseModel):
+    """批处理操作结果模型"""
+    operation_id: str = Field(..., description="操作唯一标识符")
+    operation_type: str = Field(..., description="操作类型")
+    image_hash: str = Field(..., description="图像哈希值")
+    status: str = Field(..., description="操作状态", pattern="^(pending|running|completed|failed|cancelled)$")
+    result: Optional[Dict[str, Any]] = Field(default=None, description="操作结果")
+    error_message: Optional[str] = Field(default=None, description="错误信息")
+    start_time: Optional[datetime] = Field(default=None, description="开始时间")
+    end_time: Optional[datetime] = Field(default=None, description="结束时间")
+    processing_time_ms: int = Field(default=0, description="处理时间（毫秒）")
+    retry_count: int = Field(default=0, description="重试次数")
+
+class BatchJobStatus(BaseModel):
+    """批处理任务状态模型"""
+    batch_id: str = Field(..., description="批处理任务ID")
+    status: str = Field(..., description="任务状态", pattern="^(pending|running|completed|failed|cancelled)$")
+    created_time: datetime = Field(..., description="创建时间")
+    start_time: Optional[datetime] = Field(default=None, description="开始时间")
+    end_time: Optional[datetime] = Field(default=None, description="结束时间")
+    callback_url: Optional[str] = Field(default=None, description="回调URL")
+    max_concurrent_operations: int = Field(..., description="最大并发操作数")
+    total_operations: int = Field(..., description="总操作数")
+    completed_operations: int = Field(..., description="已完成操作数")
+    failed_operations: int = Field(..., description="失败操作数")
+    progress_percentage: float = Field(..., description="进度百分比", ge=0.0, le=100.0)
+    operations: List[BatchOperationResult] = Field(default=[], description="操作列表")
+
+class BatchProcessingResponse(BaseModel):
+    """批处理响应模型"""
+    batch_id: str = Field(..., description="批处理任务ID")
+    status: str = Field(..., description="任务状态")
+    message: str = Field(..., description="响应消息")
+    created_time: datetime = Field(..., description="创建时间")
+    total_operations: int = Field(..., description="总操作数")
+
+class BatchResultsResponse(BaseModel):
+    """批处理结果响应模型"""
+    batch_id: str = Field(..., description="批处理任务ID")
+    summary: Dict[str, Any] = Field(..., description="结果汇总")
+    results_by_type: Dict[str, List[Any]] = Field(..., description="按类型分组的结果")
+    successful_operations: List[BatchOperationResult] = Field(..., description="成功的操作")
+    failed_operations: List[BatchOperationResult] = Field(..., description="失败的操作")
+    batch_metadata: Dict[str, Any] = Field(..., description="批处理元数据")
+
 class ErrorResponse(BaseModel):
     """错误响应模型"""
     error: str = Field(..., description="错误类型")

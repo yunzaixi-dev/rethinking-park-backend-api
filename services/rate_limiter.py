@@ -21,6 +21,8 @@ class RateLimiterService:
             "analyze": "5/minute",      # 分析API：每分钟5次（Vision API比较昂贵）
             "list": "30/minute",        # 列表API：每分钟30次
             "delete": "5/minute",       # 删除API：每分钟5次
+            "batch": "2/minute",        # 批处理API：每分钟2次（资源密集型）
+            "status": "60/minute",      # 状态查询API：每分钟60次
         }
     
     def get_limiter(self):
