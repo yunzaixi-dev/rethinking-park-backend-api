@@ -1483,8 +1483,9 @@ async def trigger_performance_optimization(request: Request):
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Performance optimization failed: {str(e)}")#
- Production Monitoring and Health Check Endpoints
+        raise HTTPException(status_code=500, detail=f"Performance optimization failed: {str(e)}")
+
+# Production Monitoring and Health Check Endpoints
 
 @app.get(f"{settings.API_V1_STR}/health-detailed")
 @limiter.limit(rate_limiter_service.get_limit_for_endpoint("list"))
