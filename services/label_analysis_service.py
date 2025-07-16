@@ -18,7 +18,7 @@ class LabelAnalysisService:
             "vegetation": {
                 "keywords": [
                     "tree", "plant", "grass", "flower", "leaf", "vegetation", "forest", 
-                    "garden", "shrub", "bush", "fern", "moss", "vine", "bamboo", "palm",
+                    "shrub", "bush", "fern", "moss", "vine", "bamboo", "palm",
                     "oak", "pine", "maple", "willow", "cedar", "birch", "eucalyptus",
                     "rose", "tulip", "daisy", "sunflower", "lily", "orchid", "cactus",
                     "herb", "weed", "algae", "lichen", "fungi", "mushroom"
@@ -43,9 +43,9 @@ class LabelAnalysisService:
             },
             "terrain": {
                 "keywords": [
-                    "ground", "soil", "rock", "stone", "path", "trail", "dirt",
-                    "sand", "gravel", "pavement", "concrete", "asphalt", "mud",
-                    "cliff", "hill", "mountain", "valley", "slope", "boulder"
+                    "ground", "soil", "rock", "stone", "trail", "dirt",
+                    "sand", "gravel", "mud", "cliff", "hill", "mountain", 
+                    "valley", "slope", "boulder"
                 ],
                 "weight_multiplier": 0.8
             },
@@ -54,7 +54,8 @@ class LabelAnalysisService:
                     "building", "structure", "bench", "fence", "road", "sidewalk",
                     "bridge", "wall", "gate", "sign", "lamp", "pole", "tower",
                     "house", "shed", "pavilion", "gazebo", "playground", "statue",
-                    "monument", "architecture", "construction", "urban", "city"
+                    "monument", "architecture", "construction", "urban", "city",
+                    "path", "pavement", "concrete", "asphalt"
                 ],
                 "weight_multiplier": 0.9
             }
@@ -145,17 +146,24 @@ class LabelAnalysisService:
             confidence = label.get("confidence", 0.0)
             topicality = label.get("topicality", confidence)
             
-            # Find matching category
+            # Find matching category with priority order (built_environment first to catch specific items)
             categorized = False
-            for category, config in self.category_mappings.items():
-                if any(keyword in label_name for keyword in config["keywords"]):
-                    categories[category].append({
-                        "name": label.get("name", ""),
-                        "confidence": confidence,
-                        "topicality": topicality,
-                        "weighted_score": confidence * config["weight_multiplier"]
-                    })
-                    categorized = True
+            category_order = ["built_environment", "water", "sky", "terrain", "vegetation"]
+            
+            for category in category_order:
+                config = self.category_mappings[category]
+                # Check for keyword matches
+                for keyword in config["keywords"]:
+                    if keyword in label_name:
+                        categories[category].append({
+                            "name": label.get("name", ""),
+                            "confidence": confidence,
+                            "topicality": topicality,
+                            "weighted_score": confidence * config["weight_multiplier"]
+                        })
+                        categorized = True
+                        break
+                if categorized:
                     break
             
             # Add to 'other' if not categorized
