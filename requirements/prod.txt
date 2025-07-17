@@ -1,0 +1,13 @@
+# Production dependencies
+-r base.txt
+
+# Production monitoring and logging
+gunicorn==21.2.0
+prometheus-client==0.19.0
+structlog==23.2.0
+
+# Production security
+cryptography==41.0.7
+
+# Production performance
+orjson==3.9.10

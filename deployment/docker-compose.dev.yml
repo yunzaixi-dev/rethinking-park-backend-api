@@ -1,0 +1,112 @@
+# Development environment Docker Compose configuration
+# Optimized for local development with hot reload and debugging
+
+version: '3.8'
+
+services:
+  # Main API service - Development
+  rethinking-park-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - ENVIRONMENT=development
+    image: rethinking-park-api:dev
+    container_name: rethinking-park-api-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "5678:5678"  # Debug port
+    environment:
+      # Application settings
+      - APP_ENV=development
+      - APP_NAME=Rethinking Park API (Dev)
+      - APP_VERSION=dev
+      - DEBUG=true
+      
+      # API configuration
+      - API_V1_STR=/api/v1
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000
+      
+      # Google Cloud configuration
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-rethinking-park-dev}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account-key.json
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-rethinking-park-images-dev}
+      
+      # Redis configuration
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_HOURS=1  # Shorter cache for development
+      
+      # Rate limiting (more lenient for development)
+      - RATE_LIMIT_ENABLED=false
+      - RATE_LIMIT_PER_MINUTE=1000
+      
+      # Performance optimization (disabled for development)
+      - PERFORMANCE_OPTIMIZATION_ENABLED=false
+      - MAX_CONCURRENT_OPERATIONS=5
+      - BATCH_PROCESSING_ENABLED=false
+      
+      # Development features
+      - ENABLE_AUTO_RELOAD=true
+      - ENABLE_DEBUG_TOOLBAR=true
+      - LOG_LEVEL=DEBUG
+      - ENABLE_METRICS=true
+      
+    volumes:
+      - ../service-account-key.json:/app/service-account-key.json:ro
+      - ../:/app:rw  # Mount source code for hot reload
+      - dev_logs:/app/logs
+    depends_on:
+      - redis
+    networks:
+      - dev_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # Redis cache service - Development
+  redis:
+    image: redis:7-alpine
+    container_name: rethinking-park-redis-dev
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - dev_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Commander for development debugging
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: rethinking-park-redis-ui-dev
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - dev_network
+
+networks:
+  dev_network:
+    driver: bridge
+    name: rethinking-park-dev-network
+
+volumes:
+  redis_dev_data:
+    driver: local
+  dev_logs:
+    driver: local

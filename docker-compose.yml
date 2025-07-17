@@ -1,39 +1,50 @@
+# Default Docker Compose configuration for local development
+# For other environments, use:
+# - Development: docker-compose -f deployment/docker-compose.dev.yml up
+# - Staging: docker-compose -f deployment/docker-compose.staging.yml up  
+# - Production: docker-compose -f deployment/production.yml up
+
+version: '3.8'
+
 services:
-  # 后端API服务
-  api:
+  # Main API service - Local Development
+  rethinking-park-api:
     build: .
-    container_name: rethinking-park-api
+    container_name: rethinking-park-api-local
     ports:
       - "8000:8000"
     environment:
-      # 应用配置
-      DEBUG: "true"
-      APP_NAME: "Rethinking Park Backend API"
-      APP_VERSION: "2.0.0"
+      # Application settings
+      - APP_ENV=local
+      - DEBUG=true
+      - APP_NAME=Rethinking Park Backend API (Local)
+      - APP_VERSION=dev
       
-      # Google Cloud配置
-      GOOGLE_CLOUD_PROJECT_ID: "${GOOGLE_CLOUD_PROJECT_ID:-rethinking-park-api}"
-      GOOGLE_CLOUD_STORAGE_BUCKET: "${GOOGLE_CLOUD_STORAGE_BUCKET:-rethinking-park-images}"
-      GOOGLE_APPLICATION_CREDENTIALS: "/app/service-account-key.json"
+      # Google Cloud configuration
+      - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID:-rethinking-park-local}
+      - GOOGLE_CLOUD_STORAGE_BUCKET=${GOOGLE_CLOUD_STORAGE_BUCKET:-rethinking-park-images-local}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account-key.json
       
-      # Redis配置 (使用系统Redis)
-      REDIS_ENABLED: "true"
-      REDIS_URL: "redis://host.docker.internal:6379"
-      CACHE_TTL_HOURS: "24"
+      # Redis configuration (using host Redis for simplicity)
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://host.docker.internal:6379
+      - CACHE_TTL_HOURS=1
       
-      # 功能配置
-      RATE_LIMIT_ENABLED: "true"
-      ENABLE_DUPLICATE_DETECTION: "true"
-      SIMILARITY_THRESHOLD: "5"
+      # Feature configuration (lenient for local development)
+      - RATE_LIMIT_ENABLED=false
+      - ENABLE_DUPLICATE_DETECTION=true
+      - SIMILARITY_THRESHOLD=5
       
-      # CORS配置
-      ALLOWED_ORIGINS: "*"
+      # CORS configuration (permissive for local development)
+      - ALLOWED_ORIGINS=*
     
     volumes:
-      # 挂载服务账号密钥文件
+      # Mount service account key file
       - "${PWD}/service-account-key.json:/app/service-account-key.json:ro"
-      # 挂载数据存储目录
+      # Mount data storage directory
       - api_data:/app/data
+      # Mount logs for debugging
+      - "${PWD}/logs:/app/logs"
     
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -53,4 +64,4 @@ volumes:
 
 networks:
   default:
-    name: rethinking-park-network
+    name: rethinking-park-local-network

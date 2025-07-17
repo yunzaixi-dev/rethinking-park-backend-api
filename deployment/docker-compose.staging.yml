@@ -1,0 +1,189 @@
+# Staging environment Docker Compose configuration
+# Production-like environment for testing before deployment
+
+version: '3.8'
+
+services:
+  # Main API service - Staging
+  rethinking-park-api:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        - ENVIRONMENT=staging
+    image: rethinking-park-api:staging
+    container_name: rethinking-park-api-staging
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Application settings
+      - APP_ENV=staging
+      - APP_NAME=Rethinking Park API (Staging)
+      - APP_VERSION=staging
+      - DEBUG=false
+      
+      # API configuration
+      - API_V1_STR=/api/v1
+      - ALLOWED_ORIGINS=https://staging.your-frontend-domain.com,https://staging-api.your-domain.com
+      
+      # Google Cloud configuration
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT:-rethinking-park-staging}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account-key.json
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-rethinking-park-images-staging}
+      
+      # Redis configuration
+      - REDIS_ENABLED=true
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TTL_HOURS=12
+      
+      # Rate limiting
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_PER_MINUTE=120
+      - RATE_LIMIT_BURST=20
+      
+      # Performance optimization
+      - PERFORMANCE_OPTIMIZATION_ENABLED=true
+      - MAX_CONCURRENT_OPERATIONS=8
+      - BATCH_PROCESSING_ENABLED=true
+      - MEMORY_OPTIMIZATION_ENABLED=true
+      - MAX_MEMORY_MB=768
+      
+      # Monitoring and logging
+      - LOG_LEVEL=INFO
+      - ENABLE_METRICS=true
+      - ENABLE_HEALTH_CHECKS=true
+      
+    volumes:
+      - ../service-account-key.json:/app/service-account-key.json:ro
+      - staging_logs:/app/logs
+      - staging_cache:/app/cache
+    depends_on:
+      - redis
+      - monitoring
+    networks:
+      - staging_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: '0.8'
+        reservations:
+          memory: 768M
+          cpus: '0.4'
+
+  # Redis cache service - Staging
+  redis:
+    image: redis:7-alpine
+    container_name: rethinking-park-redis-staging
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_staging_data:/data
+    networks:
+      - staging_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.4'
+        reservations:
+          memory: 192M
+          cpus: '0.2'
+
+  # Nginx reverse proxy - Staging
+  nginx:
+    image: nginx:alpine
+    container_name: rethinking-park-nginx-staging
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx_staging_cache:/var/cache/nginx
+      - nginx_staging_logs:/var/log/nginx
+    depends_on:
+      - rethinking-park-api
+    networks:
+      - staging_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+          cpus: '0.3'
+        reservations:
+          memory: 96M
+          cpus: '0.15'
+
+  # Monitoring - Staging
+  monitoring:
+    image: prom/prometheus:latest
+    container_name: rethinking-park-monitoring-staging
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_staging_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    networks:
+      - staging_network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.3'
+        reservations:
+          memory: 192M
+          cpus: '0.15'
+
+networks:
+  staging_network:
+    driver: bridge
+    name: rethinking-park-staging-network
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+volumes:
+  redis_staging_data:
+    driver: local
+  prometheus_staging_data:
+    driver: local
+  staging_logs:
+    driver: local
+  nginx_staging_logs:
+    driver: local
+  nginx_staging_cache:
+    driver: local
+  staging_cache:
+    driver: local

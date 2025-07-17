@@ -28,17 +28,67 @@
 - **重复检测API**: 专门的重复检测端点
 - **批量操作**: 支持基于哈希的批量处理
 
-## 📋 API端点
+## 🚀 快速开始
+
+### 1. 快速安装
+```bash
+# 克隆项目
+git clone <repository-url>
+cd rethinking-park-backend-api
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置环境
+cp .env.example .env
+# 编辑 .env 文件设置你的配置
+
+# 启动服务
+python main.py
+```
+
+### 2. Docker 快速启动
+```bash
+# 使用 Docker Compose
+docker-compose up --build
+
+# 或使用部署脚本
+./scripts/deployment/deploy_dev.sh
+```
+
+### 3. 验证安装
+```bash
+# 健康检查
+curl http://localhost:8000/health
+
+# 查看 API 文档
+# 浏览器访问: http://localhost:8000/docs
+```
+
+## 📚 文档
+
+### 📖 用户文档
+- **[快速开始指南](docs/development/quick-start.md)** - 5分钟快速上手
+- **[Google Cloud 配置](docs/deployment/google-cloud-setup.md)** - 详细的GCP配置教程
+- **[API 文档](docs/api/README.md)** - 完整的API参考文档
+
+### 🛠️ 开发文档
+- **[开发指南](docs/development/README.md)** - 开发环境设置和编码规范
+- **[配置管理](docs/development/configuration.md)** - 配置系统详细说明
+
+### 🚀 部署文档
+- **[部署指南](docs/deployment/README.md)** - 多环境部署说明
+- **[故障排除](docs/deployment/troubleshooting.md)** - 常见问题解决方案
+
+## 📋 主要API端点
 
 ### 图像上传
 ```http
 POST /api/v1/upload
 ```
-- 上传图像并返回哈希值
-- 自动检测重复和相似图像
-- 速率限制: 10次/分钟
+上传图像并返回哈希值，自动检测重复和相似图像
 
-### 图像分析 (基于哈希)
+### 图像分析
 ```http
 POST /api/v1/analyze
 {
@@ -47,35 +97,60 @@ POST /api/v1/analyze
     "force_refresh": false
 }
 ```
-- 使用图像哈希进行分析
-- 自动缓存分析结果
-- 速率限制: 5次/分钟
-
-### 图像分析 (基于ID - 向后兼容)
-```http
-POST /api/v1/analyze-by-id
-{
-    "image_id": "uuid-string",
-    "analysis_type": "labels"
-}
-```
+使用图像哈希进行分析，自动缓存分析结果
 
 ### 重复检测
 ```http
 GET /api/v1/check-duplicate/{image_hash}
 ```
-- 检查图像是否重复
-- 返回相似图像列表
+检查图像是否重复，返回相似图像列表
 
 ### 系统统计
 ```http
 GET /api/v1/stats
 ```
-- 存储统计信息
-- 缓存性能统计
-- 系统配置状态
+获取存储统计、缓存性能和系统配置状态
 
-## 🛠️ 环境配置
+> 📖 **完整API文档**: 查看 [API文档](docs/api/README.md) 或访问 http://localhost:8000/docs
+
+## 🛠️ 项目结构
+
+```
+rethinking-park-backend-api/
+├── app/                    # 主应用代码
+│   ├── api/               # API路由
+│   ├── config/            # 配置管理
+│   ├── core/              # 核心功能
+│   ├── models/            # 数据模型
+│   ├── services/          # 业务服务
+│   └── utils/             # 工具函数
+├── services/              # 独立服务模块
+├── tests/                 # 测试代码
+├── scripts/               # 脚本文件
+├── deployment/            # 部署配置
+├── docs/                  # 项目文档
+│   ├── api/              # API文档
+│   ├── deployment/       # 部署文档
+│   └── development/      # 开发文档
+└── config/               # 环境配置文件
+```
+
+## ⚡ 性能特性
+
+### 缓存策略
+- **分析结果缓存**: 24小时TTL，避免重复调用Vision API
+- **重复图像检测**: 基于MD5和感知哈希的智能去重
+- **哈希索引**: 快速查找和匹配相似图像
+
+### 速率限制
+| 端点类型 | 限制 | 说明 |
+|---------|------|------|
+| 上传 | 10次/分钟 | 图像上传API |
+| 分析 | 5次/分钟 | Vision API分析 |
+| 查询 | 30次/分钟 | 列表、获取信息等 |
+| 删除 | 5次/分钟 | 删除操作 |
+
+## 🔧 配置
 
 ### 基础配置
 ```env
@@ -88,159 +163,103 @@ GOOGLE_APPLICATION_CREDENTIALS=./service-account-key.json
 DEBUG=false
 APP_NAME="Rethinking Park Backend API"
 APP_VERSION="2.0.0"
-```
 
-### Redis缓存配置
-```env
 # Redis缓存配置
 REDIS_ENABLED=true
 REDIS_URL=redis://localhost:6379
 CACHE_TTL_HOURS=24
-```
 
-### 速率限制配置
-```env
 # 速率限制配置
 RATE_LIMIT_ENABLED=true
-```
 
-### 重复检测配置
-```env
-# 图像重复检测配置
+# 重复检测配置
 ENABLE_DUPLICATE_DETECTION=true
-SIMILARITY_THRESHOLD=5  # 汉明距离阈值
+SIMILARITY_THRESHOLD=5
 ```
 
-## 🚀 快速开始
-
-### 1. 安装依赖
-```bash
-# 安装Python依赖
-pip install -r requirements.txt
-
-# 安装Redis (Arch Linux)
-sudo pacman -S redis
-# 或使用yay
-yay -S redis
-
-# 启动Redis
-sudo systemctl start redis
-sudo systemctl enable redis
-```
-
-### 2. 配置环境
-```bash
-# 复制配置文件
-cp env.example .env
-
-# 编辑配置文件
-nano .env
-```
-
-### 3. 启动服务
-```bash
-# 开发模式
-python main.py
-
-# 或使用uvicorn
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 4. 测试功能
-```bash
-# 运行增强功能测试
-python test_enhanced_features.py
-
-# 运行Google Cloud测试
-python test_gcp.py
-```
-
-## 📊 API速率限制
-
-| 端点类型 | 限制 | 说明 |
-|---------|------|------|
-| 上传 | 10次/分钟 | 图像上传API |
-| 分析 | 5次/分钟 | Vision API分析（昂贵） |
-| 查询 | 30次/分钟 | 列表、获取信息等 |
-| 删除 | 5次/分钟 | 删除操作 |
-| 默认 | 20次/分钟, 100次/小时 | 其他API |
-
-## 🎯 性能优化
-
-### 缓存策略
-- **分析结果缓存**: 24小时TTL
-- **重复图像检测**: 避免重复存储
-- **哈希索引**: 快速查找和匹配
-
-### 存储优化
-- **基于哈希的文件名**: 避免重复存储
-- **元数据分离**: 快速查询不下载文件
-- **批量操作**: 支持批量处理
-
-## 🔧 故障排除
-
-### Redis连接问题
-```bash
-# 检查Redis状态
-sudo systemctl status redis
-
-# 测试Redis连接
-redis-cli ping
-```
-
-### 速率限制调试
-- 检查 `RATE_LIMIT_ENABLED` 环境变量
-- 查看API响应头中的限制信息
-- 调整各端点的限制配置
-
-### 缓存问题
-```bash
-# 查看缓存键
-redis-cli keys "analysis:*"
-
-# 清除所有缓存
-redis-cli flushall
-```
-
-## 📝 API文档
-
-启动服务后访问:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+> 📖 **详细配置说明**: 查看 [配置管理文档](docs/development/configuration.md)
 
 ## 🧪 测试
 
-### 单元测试
+### 运行测试
 ```bash
-# Google Cloud配置测试
-python test_gcp.py
+# 运行所有测试
+pytest
 
-# 增强功能测试
-python test_enhanced_features.py
+# 运行特定测试
+pytest tests/unit/test_image_service.py
+
+# 生成覆盖率报告
+pytest --cov=app --cov-report=html
 ```
 
 ### 手动测试
 ```bash
-# 上传图像
+# 测试Google Cloud连接
+python test_gcp.py
+
+# 测试增强功能
+python test_enhanced_features.py
+
+# API测试
 curl -X POST "http://localhost:8000/api/v1/upload" \
-     -H "accept: application/json" \
      -H "Content-Type: multipart/form-data" \
      -F "file=@test_image.jpg"
-
-# 分析图像
-curl -X POST "http://localhost:8000/api/v1/analyze" \
-     -H "accept: application/json" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "image_hash": "your-image-hash",
-       "analysis_type": "labels"
-     }'
 ```
+
+## 🚀 部署
+
+### 开发环境
+```bash
+# 使用Docker Compose
+docker-compose up --build
+
+# 或使用部署脚本
+./scripts/deployment/deploy_dev.sh
+```
+
+### 生产环境
+```bash
+# 生产部署
+./scripts/deployment/deploy_production.sh
+
+# 或使用Docker
+docker-compose -f deployment/production.yml up -d
+```
+
+> 📖 **详细部署说明**: 查看 [部署指南](docs/deployment/README.md)
+
+## 🔧 故障排除
+
+### 常见问题
+- **Redis连接问题**: 检查Redis服务状态和连接配置
+- **Google Cloud认证**: 确保服务账号密钥文件路径正确
+- **速率限制**: 查看API响应头中的限制信息
+- **缓存问题**: 使用Redis CLI检查缓存状态
+
+> 📖 **详细故障排除**: 查看 [故障排除指南](docs/deployment/troubleshooting.md)
 
 ## 🤝 贡献
 
-欢迎提交Issue和Pull Request！
+我们欢迎各种形式的贡献！
 
-## �� 许可证
+1. **报告问题**: 在GitHub Issues中报告bug或提出功能请求
+2. **提交代码**: Fork项目，创建功能分支，提交Pull Request
+3. **改进文档**: 帮助改进项目文档和示例
 
-MIT License 
+> 📖 **开发指南**: 查看 [开发文档](docs/development/README.md) 了解开发规范
+
+## 📄 许可证
+
+MIT License - 查看 [LICENSE](LICENSE) 文件了解详情
+
+## 🆘 获取帮助
+
+- **文档**: 查看 [docs/](docs/) 目录下的详细文档
+- **API文档**: http://localhost:8000/docs (启动服务后访问)
+- **GitHub Issues**: 报告问题或提出功能请求
+- **社区支持**: Stack Overflow, Reddit等
+
+---
+
+🎉 **开始使用**: 查看 [快速开始指南](docs/development/quick-start.md) 立即开始！
