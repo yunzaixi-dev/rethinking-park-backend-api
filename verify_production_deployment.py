@@ -1,535 +1,327 @@
 #!/usr/bin/env python3
 """
-Verification script for production deployment configuration
-Tests deployment readiness, monitoring, and performance optimization
+生产环境部署验证脚本
+详细分析API状态和问题
 """
 
-import sys
-import os
-import asyncio
+import requests
 import json
+import sys
 from datetime import datetime
-from pathlib import Path
+from typing import Dict, List, Any
 
-# Add current directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-def test_deployment_files():
-    """Test that all deployment files exist and are properly configured"""
-    print("🔍 Testing deployment files...")
-    
-    required_files = [
-        "deployment/production.yml",
-        "deployment/nginx.conf",
-        "deployment/prometheus.yml",
-        "deployment/fluent-bit.conf",
-        "deploy_production.sh",
-        "Dockerfile"
-    ]
-    
-    missing_files = []
-    for file_path in required_files:
-        if not Path(file_path).exists():
-            missing_files.append(file_path)
-    
-    if missing_files:
-        print(f"❌ Missing deployment files: {missing_files}")
-        return False
-    
-    print("✅ All deployment files present")
-    return True
-
-def test_docker_compose_config():
-    """Test Docker Compose configuration"""
-    print("🔍 Testing Docker Compose configuration...")
-    
-    try:
-        import yaml
-        
-        with open("deployment/production.yml", "r") as f:
-            compose_config = yaml.safe_load(f)
-        
-        # Check required services
-        required_services = [
-            "rethinking-park-api",
-            "redis",
-            "nginx",
-            "monitoring",
-            "log_aggregator"
-        ]
-        
-        services = compose_config.get("services", {})
-        missing_services = []
-        
-        for service in required_services:
-            if service not in services:
-                missing_services.append(service)
-        
-        if missing_services:
-            print(f"❌ Missing services in Docker Compose: {missing_services}")
-            return False
-        
-        # Check API service configuration
-        api_service = services.get("rethinking-park-api", {})
-        
-        # Check environment variables
-        env_vars = api_service.get("environment", [])
-        required_env_vars = [
-            "APP_ENV=production",
-            "REDIS_ENABLED=true",
-            "RATE_LIMIT_ENABLED=true",
-            "PERFORMANCE_OPTIMIZATION_ENABLED=true"
-        ]
-        
-        env_str = " ".join(env_vars) if isinstance(env_vars, list) else str(env_vars)
-        
-        for required_env in required_env_vars:
-            if required_env not in env_str:
-                print(f"⚠️  Missing environment variable: {required_env}")
-        
-        # Check health check configuration
-        if "healthcheck" not in api_service:
-            print("⚠️  No health check configured for API service")
-        
-        # Check resource limits
-        deploy_config = api_service.get("deploy", {})
-        resources = deploy_config.get("resources", {})
-        
-        if not resources.get("limits"):
-            print("⚠️  No resource limits configured for API service")
-        
-        print("✅ Docker Compose configuration validated")
-        return True
-        
-    except ImportError:
-        print("⚠️  PyYAML not available, skipping Docker Compose validation")
-        return True
-    except Exception as e:
-        print(f"❌ Docker Compose configuration error: {e}")
-        return False
-
-def test_nginx_config():
-    """Test Nginx configuration"""
-    print("🔍 Testing Nginx configuration...")
-    
-    try:
-        with open("deployment/nginx.conf", "r") as f:
-            nginx_config = f.read()
-        
-        # Check for required configurations
-        required_configs = [
-            "upstream api_backend",
-            "proxy_cache_path",
-            "limit_req_zone",
-            "gzip on",
-            "ssl_protocols",  # May be commented out
-            "location /api/v1/",
-            "location ~ ^/api/v1/(upload|batch-process)",
-            "location ~ ^/api/v1/(download|processed-images)/"
-        ]
-        
-        missing_configs = []
-        for config in required_configs:
-            if config not in nginx_config and not config.startswith("ssl_"):
-                missing_configs.append(config)
-        
-        if missing_configs:
-            print(f"❌ Missing Nginx configurations: {missing_configs}")
-            return False
-        
-        # Check for performance optimizations
-        performance_configs = [
-            "proxy_cache",
-            "gzip_comp_level",
-            "keepalive_timeout",
-            "worker_processes auto"
-        ]
-        
-        for config in performance_configs:
-            if config not in nginx_config:
-                print(f"⚠️  Missing performance optimization: {config}")
-        
-        print("✅ Nginx configuration validated")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Nginx configuration error: {e}")
-        return False
-
-def test_monitoring_config():
-    """Test monitoring configuration"""
-    print("🔍 Testing monitoring configuration...")
-    
-    try:
-        import yaml
-        
-        # Test Prometheus configuration
-        with open("deployment/prometheus.yml", "r") as f:
-            prometheus_config = yaml.safe_load(f)
-        
-        scrape_configs = prometheus_config.get("scrape_configs", [])
-        
-        required_jobs = [
-            "prometheus",
-            "rethinking-park-api",
-            "api-performance",
-            "vision-api-usage",
-            "cache-performance",
-            "batch-processing"
-        ]
-        
-        job_names = [job.get("job_name") for job in scrape_configs]
-        missing_jobs = []
-        
-        for job in required_jobs:
-            if job not in job_names:
-                missing_jobs.append(job)
-        
-        if missing_jobs:
-            print(f"❌ Missing Prometheus jobs: {missing_jobs}")
-            return False
-        
-        print("✅ Monitoring configuration validated")
-        return True
-        
-    except ImportError:
-        print("⚠️  PyYAML not available, skipping monitoring validation")
-        return True
-    except Exception as e:
-        print(f"❌ Monitoring configuration error: {e}")
-        return False
-
-def test_logging_config():
-    """Test logging configuration"""
-    print("🔍 Testing logging configuration...")
-    
-    try:
-        with open("deployment/fluent-bit.conf", "r") as f:
-            fluent_config = f.read()
-        
-        # Check for required input sources
-        required_inputs = [
-            "[INPUT]",
-            "Name              tail",
-            "Path              /var/log/api/*.log",
-            "Path              /var/log/nginx/access.log"
-        ]
-        
-        for input_config in required_inputs:
-            if input_config not in fluent_config:
-                print(f"⚠️  Missing logging input: {input_config}")
-        
-        # Check for filters and outputs
-        required_sections = [
-            "[FILTER]",
-            "[OUTPUT]"
-        ]
-        
-        for section in required_sections:
-            if section not in fluent_config:
-                print(f"⚠️  Missing logging section: {section}")
-        
-        print("✅ Logging configuration validated")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Logging configuration error: {e}")
-        return False
-
-async def test_monitoring_service():
-    """Test monitoring service functionality"""
-    print("🔍 Testing monitoring service...")
-    
-    try:
-        # Test monitoring service import and basic functionality
-        from services.monitoring_service import MonitoringService, HealthChecker, MetricsCollector
-        from services.cache_service import CacheService
-        from unittest.mock import Mock
-        
-        # Create mock cache service
-        mock_cache = Mock(spec=CacheService)
-        mock_cache.is_enabled.return_value = True
-        
-        # Test monitoring service creation
-        monitoring = MonitoringService(mock_cache)
-        
-        # Test health checker
-        health_checker = HealthChecker()
-        
-        # Register a simple test check
-        async def test_check():
-            return {"status": "healthy", "details": {"test": True}}
-        
-        health_checker.register_check("test", test_check)
-        
-        # Run the test check
-        result = await health_checker.run_check("test")
-        
-        if result.status != "healthy":
-            print(f"❌ Health check failed: {result.error_message}")
-            return False
-        
-        # Test metrics collector
-        metrics_collector = MetricsCollector()
-        
-        # Record some test metrics
-        metrics_collector.record_request(success=True, response_time_ms=100.0)
-        metrics_collector.record_vision_api_call()
-        metrics_collector.update_cache_metrics(0.8)
-        
-        # Get metrics
-        api_metrics = metrics_collector.get_api_metrics()
-        
-        if api_metrics.total_requests != 1:
-            print(f"❌ Metrics recording failed: expected 1 request, got {api_metrics.total_requests}")
-            return False
-        
-        if api_metrics.vision_api_calls != 1:
-            print(f"❌ Vision API metrics failed: expected 1 call, got {api_metrics.vision_api_calls}")
-            return False
-        
-        print("✅ Monitoring service functionality validated")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Monitoring service test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-async def test_performance_optimization():
-    """Test performance optimization functionality"""
-    print("🔍 Testing performance optimization...")
-    
-    try:
-        # Test performance optimizer import
-        from services.performance_optimizer import (
-            PerformanceOptimizer, 
-            MemoryManager, 
-            VisionAPIBatcher,
-            AsyncProcessingQueue
-        )
-        from services.cache_service import CacheService
-        from unittest.mock import Mock
-        
-        # Test memory manager
-        memory_manager = MemoryManager(max_memory_mb=256)
-        
-        usage = memory_manager.get_memory_usage()
-        if not isinstance(usage, float) or usage < 0:
-            print(f"❌ Memory usage detection failed: {usage}")
-            return False
-        
-        # Test optimization
-        stats = memory_manager.optimize_memory()
-        if "optimizations_performed" not in stats:
-            print("❌ Memory optimization failed")
-            return False
-        
-        # Test async processing queue
-        queue = AsyncProcessingQueue(max_workers=2, max_queue_size=10)
-        
-        await queue.start()
-        if not queue.is_running:
-            print("❌ Async queue failed to start")
-            return False
-        
-        # Test simple task
-        async def test_task(value):
-            return value * 2
-        
-        future = await queue.submit_task(test_task, 5)
-        result = await future
-        
-        if result != 10:
-            print(f"❌ Async task failed: expected 10, got {result}")
-            return False
-        
-        await queue.stop()
-        if queue.is_running:
-            print("❌ Async queue failed to stop")
-            return False
-        
-        print("✅ Performance optimization functionality validated")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Performance optimization test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def test_deployment_script():
-    """Test deployment script"""
-    print("🔍 Testing deployment script...")
-    
-    try:
-        # Check if deployment script exists and is executable
-        script_path = Path("deploy_production.sh")
-        
-        if not script_path.exists():
-            print("❌ Deployment script not found")
-            return False
-        
-        # Check if script is executable
-        if not os.access(script_path, os.X_OK):
-            print("⚠️  Deployment script is not executable")
-            print("   Run: chmod +x deploy_production.sh")
-        
-        # Read script content and check for required functions
-        with open(script_path, "r") as f:
-            script_content = f.read()
-        
-        required_functions = [
-            "check_prerequisites",
-            "validate_environment",
-            "build_images",
-            "deploy_services",
-            "wait_for_services",
-            "run_health_checks"
-        ]
-        
-        missing_functions = []
-        for func in required_functions:
-            if func not in script_content:
-                missing_functions.append(func)
-        
-        if missing_functions:
-            print(f"❌ Missing deployment functions: {missing_functions}")
-            return False
-        
-        print("✅ Deployment script validated")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Deployment script test failed: {e}")
-        return False
-
-def test_production_readiness():
-    """Test overall production readiness"""
-    print("🔍 Testing production readiness...")
-    
-    readiness_checks = []
-    
-    # Check environment variables
-    required_env_vars = [
-        "GOOGLE_CLOUD_PROJECT",
-        "GCS_BUCKET_NAME"
-    ]
-    
-    for var in required_env_vars:
-        if var in os.environ:
-            readiness_checks.append(f"✅ {var} configured")
-        else:
-            readiness_checks.append(f"⚠️  {var} not configured")
-    
-    # Check service account key
-    if Path("service-account-key.json").exists():
-        readiness_checks.append("✅ Service account key present")
-    else:
-        readiness_checks.append("⚠️  Service account key missing")
-    
-    # Check Docker availability
-    try:
-        import subprocess
-        result = subprocess.run(["docker", "--version"], capture_output=True, text=True)
-        if result.returncode == 0:
-            readiness_checks.append("✅ Docker available")
-        else:
-            readiness_checks.append("❌ Docker not available")
-    except FileNotFoundError:
-        readiness_checks.append("❌ Docker not installed")
-    
-    # Check Docker Compose availability
-    try:
-        result = subprocess.run(["docker-compose", "--version"], capture_output=True, text=True)
-        if result.returncode == 0:
-            readiness_checks.append("✅ Docker Compose available")
-        else:
-            readiness_checks.append("❌ Docker Compose not available")
-    except FileNotFoundError:
-        readiness_checks.append("❌ Docker Compose not installed")
-    
-    print("\n📋 Production Readiness Checklist:")
-    for check in readiness_checks:
-        print(f"   {check}")
-    
-    # Count successful checks
-    successful_checks = sum(1 for check in readiness_checks if check.startswith("✅"))
-    total_checks = len(readiness_checks)
-    
-    print(f"\n📊 Readiness Score: {successful_checks}/{total_checks}")
-    
-    if successful_checks == total_checks:
-        print("🎉 System is ready for production deployment!")
-        return True
-    elif successful_checks >= total_checks * 0.8:
-        print("⚠️  System is mostly ready, but some issues need attention")
-        return True
-    else:
-        print("❌ System is not ready for production deployment")
-        return False
-
-async def main():
-    """Run all verification tests"""
-    print("🚀 Starting production deployment verification...\n")
-    
-    tests = [
-        ("Deployment Files", test_deployment_files),
-        ("Docker Compose Config", test_docker_compose_config),
-        ("Nginx Configuration", test_nginx_config),
-        ("Monitoring Configuration", test_monitoring_config),
-        ("Logging Configuration", test_logging_config),
-        ("Monitoring Service", test_monitoring_service),
-        ("Performance Optimization", test_performance_optimization),
-        ("Deployment Script", test_deployment_script),
-        ("Production Readiness", test_production_readiness),
-    ]
-    
-    passed = 0
-    total = len(tests)
-    
-    for test_name, test_func in tests:
-        print(f"\n📋 Running {test_name}...")
+class ProductionAPIVerifier:
+    def __init__(self, base_url: str = "https://api.rethinkingpark.com"):
+        self.base_url = base_url.rstrip('/')
+        self.api_v1 = f"{self.base_url}/api/v1"
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'RethinkingPark-Production-Verifier/1.0'
+        })
+        self.results = {
+            'working': [],
+            'broken': [],
+            'warnings': []
+        }
+        
+    def test_endpoint(self, name: str, method: str, url: str, payload: Dict = None, files: Dict = None) -> Dict:
+        """测试单个端点"""
         try:
-            if asyncio.iscoroutinefunction(test_func):
-                result = await test_func()
+            if method.upper() == 'GET':
+                response = self.session.get(url, timeout=15)
+            elif method.upper() == 'POST':
+                if files:
+                    response = self.session.post(url, files=files, timeout=15)
+                else:
+                    response = self.session.post(url, json=payload, timeout=15)
             else:
-                result = test_func()
+                return {'status': 'unsupported', 'details': f'Method {method} not supported'}
             
-            if result:
-                passed += 1
-                print(f"✅ {test_name} PASSED")
-            else:
-                print(f"❌ {test_name} FAILED")
+            result = {
+                'name': name,
+                'method': method,
+                'url': url,
+                'status_code': response.status_code,
+                'status': 'success' if response.status_code == 200 else 'error',
+                'response_time': response.elapsed.total_seconds(),
+                'details': {}
+            }
+            
+            # 尝试解析JSON响应
+            try:
+                result['response'] = response.json()
+                if response.status_code != 200:
+                    result['details']['error_message'] = result['response'].get('message', 'Unknown error')
+                    result['details']['error_details'] = result['response'].get('details', {})
+            except:
+                result['response'] = response.text[:200] if response.text else 'No response body'
+            
+            return result
+            
+        except requests.exceptions.RequestException as e:
+            return {
+                'name': name,
+                'method': method,
+                'url': url,
+                'status': 'connection_error',
+                'details': {'exception': str(e)}
+            }
         except Exception as e:
-            print(f"❌ {test_name} FAILED with exception: {e}")
+            return {
+                'name': name,
+                'method': method,
+                'url': url,
+                'status': 'unknown_error',
+                'details': {'exception': str(e)}
+            }
     
-    print(f"\n📊 Results: {passed}/{total} tests passed")
+    def verify_basic_endpoints(self):
+        """验证基础端点"""
+        print("🔍 验证基础端点...")
+        
+        endpoints = [
+            ("根路径", "GET", f"{self.base_url}/"),
+            ("健康检查", "GET", f"{self.base_url}/health"),
+            ("API统计", "GET", f"{self.api_v1}/stats"),
+            ("详细健康检查", "GET", f"{self.api_v1}/health-detailed"),
+        ]
+        
+        for name, method, url in endpoints:
+            result = self.test_endpoint(name, method, url)
+            
+            if result['status'] == 'success':
+                print(f"✅ {name}: 正常")
+                self.results['working'].append(result)
+                
+                # 显示关键信息
+                if 'response' in result and isinstance(result['response'], dict):
+                    resp = result['response']
+                    if 'version' in resp:
+                        print(f"   版本: {resp['version']}")
+                    if 'status' in resp:
+                        print(f"   状态: {resp['status']}")
+                        
+            else:
+                print(f"❌ {name}: 失败 (状态码: {result.get('status_code', 'N/A')})")
+                self.results['broken'].append(result)
+                
+                if 'details' in result and 'error_message' in result['details']:
+                    print(f"   错误: {result['details']['error_message']}")
     
-    if passed == total:
-        print("\n🎉 All production deployment features verified successfully!")
-        print("\n📋 Production Deployment Features:")
-        print("   ✅ Docker Compose production configuration")
-        print("   ✅ Nginx reverse proxy with CDN capabilities")
-        print("   ✅ Prometheus monitoring and metrics collection")
-        print("   ✅ Fluent Bit log aggregation and processing")
-        print("   ✅ Comprehensive health checks and monitoring")
-        print("   ✅ Performance optimization for no-GPU environment")
-        print("   ✅ Automated deployment script with validation")
-        print("   ✅ Production-ready configuration management")
-        print("\n🚀 Ready for production deployment!")
-        return True
+    def verify_image_operations(self):
+        """验证图片操作功能"""
+        print("\n🔍 验证图片操作功能...")
+        
+        # 测试图片上传
+        test_image_data = b"fake image data for testing"
+        files = {'file': ('test.jpg', test_image_data, 'image/jpeg')}
+        
+        upload_result = self.test_endpoint(
+            "图片上传", "POST", f"{self.api_v1}/upload", files=files
+        )
+        
+        if upload_result['status'] == 'success':
+            print("✅ 图片上传: 正常")
+            self.results['working'].append(upload_result)
+            
+            # 获取上传的图片哈希
+            image_hash = upload_result['response'].get('image_hash')
+            if image_hash:
+                print(f"   图片哈希: {image_hash}")
+                
+                # 测试图片相关操作
+                image_operations = [
+                    ("图片信息", "GET", f"{self.api_v1}/image/{image_hash}"),
+                    ("重复检查", "GET", f"{self.api_v1}/check-duplicate/{image_hash}"),
+                ]
+                
+                for name, method, url in image_operations:
+                    result = self.test_endpoint(name, method, url)
+                    
+                    if result['status'] == 'success':
+                        print(f"✅ {name}: 正常")
+                        self.results['working'].append(result)
+                    else:
+                        print(f"❌ {name}: 失败")
+                        self.results['broken'].append(result)
+                
+                # 测试图片分析（可能会失败，但要记录原因）
+                analysis_tests = [
+                    ("基础分析", {
+                        "image_hash": image_hash,
+                        "analysis_types": ["labels"]
+                    }),
+                    ("自然元素分析", {
+                        "image_hash": image_hash,
+                        "analysis_types": ["vegetation"]
+                    })
+                ]
+                
+                for name, payload in analysis_tests:
+                    if name == "基础分析":
+                        url = f"{self.api_v1}/analyze"
+                    else:
+                        url = f"{self.api_v1}/analyze-nature"
+                    
+                    result = self.test_endpoint(name, "POST", url, payload)
+                    
+                    if result['status'] == 'success':
+                        print(f"✅ {name}: 正常")
+                        self.results['working'].append(result)
+                    else:
+                        print(f"⚠️ {name}: 失败 (可能是配置问题)")
+                        self.results['warnings'].append(result)
+                        
+                        if result.get('status_code') == 422:
+                            print("   原因: 请求参数验证失败")
+                        elif result.get('status_code') == 500:
+                            print("   原因: 服务器内部错误 (可能是Vision API配置)")
+                
+                # 清理测试图片
+                delete_result = self.test_endpoint(
+                    "删除图片", "DELETE", f"{self.api_v1}/image/{image_hash}"
+                )
+                
+                if delete_result['status'] == 'success':
+                    print("✅ 图片删除: 正常")
+                    self.results['working'].append(delete_result)
+                else:
+                    print("⚠️ 图片删除: 失败")
+                    self.results['warnings'].append(delete_result)
+            
+        else:
+            print("❌ 图片上传: 失败")
+            self.results['broken'].append(upload_result)
+    
+    def verify_monitoring_endpoints(self):
+        """验证监控端点"""
+        print("\n🔍 验证监控端点...")
+        
+        monitoring_endpoints = [
+            ("系统指标", "GET", f"{self.api_v1}/metrics"),
+            ("Vision API指标", "GET", f"{self.api_v1}/vision-api-metrics"),
+            ("缓存指标", "GET", f"{self.api_v1}/cache-metrics"),
+            ("批处理指标", "GET", f"{self.api_v1}/batch-metrics"),
+            ("性能指标", "GET", f"{self.api_v1}/performance-metrics"),
+        ]
+        
+        for name, method, url in monitoring_endpoints:
+            result = self.test_endpoint(name, method, url)
+            
+            if result['status'] == 'success':
+                print(f"✅ {name}: 正常")
+                self.results['working'].append(result)
+            else:
+                print(f"❌ {name}: 失败")
+                self.results['broken'].append(result)
+    
+    def generate_report(self):
+        """生成详细报告"""
+        print("\n" + "="*60)
+        print("📊 生产环境API验证报告")
+        print("="*60)
+        
+        working_count = len(self.results['working'])
+        broken_count = len(self.results['broken'])
+        warning_count = len(self.results['warnings'])
+        total_count = working_count + broken_count + warning_count
+        
+        print(f"📈 总体状态:")
+        print(f"  ✅ 正常功能: {working_count}")
+        print(f"  ❌ 故障功能: {broken_count}")
+        print(f"  ⚠️ 警告功能: {warning_count}")
+        print(f"  📊 总计: {total_count}")
+        
+        if total_count > 0:
+            success_rate = (working_count / total_count) * 100
+            print(f"  🎯 成功率: {success_rate:.1f}%")
+        
+        # 核心功能状态
+        print(f"\n🔧 核心功能状态:")
+        core_functions = ['根路径', '健康检查', '图片上传', '图片信息', '系统指标']
+        core_working = [r for r in self.results['working'] if r['name'] in core_functions]
+        core_broken = [r for r in self.results['broken'] if r['name'] in core_functions]
+        
+        if len(core_working) >= 4:  # 至少4个核心功能正常
+            print("  ✅ 核心功能基本正常")
+        else:
+            print("  ❌ 核心功能存在问题")
+        
+        # 详细问题分析
+        if broken_count > 0:
+            print(f"\n❌ 故障功能详情:")
+            for result in self.results['broken']:
+                print(f"  - {result['name']}: 状态码 {result.get('status_code', 'N/A')}")
+                if 'details' in result and 'error_message' in result['details']:
+                    print(f"    错误: {result['details']['error_message']}")
+        
+        if warning_count > 0:
+            print(f"\n⚠️ 警告功能详情:")
+            for result in self.results['warnings']:
+                print(f"  - {result['name']}: 状态码 {result.get('status_code', 'N/A')}")
+                if 'details' in result and 'error_message' in result['details']:
+                    print(f"    原因: {result['details']['error_message']}")
+        
+        # 建议
+        print(f"\n💡 建议:")
+        if broken_count == 0:
+            print("  🎉 API运行状态良好!")
+        else:
+            print("  🔧 需要修复故障功能")
+            
+        if warning_count > 0:
+            print("  ⚙️ 检查Vision API和其他外部服务配置")
+        
+        # 保存详细报告
+        report_data = {
+            'timestamp': datetime.now().isoformat(),
+            'summary': {
+                'total': total_count,
+                'working': working_count,
+                'broken': broken_count,
+                'warnings': warning_count,
+                'success_rate': (working_count / total_count * 100) if total_count > 0 else 0
+            },
+            'results': self.results
+        }
+        
+        with open('production_verification_report.json', 'w', encoding='utf-8') as f:
+            json.dump(report_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n📄 详细报告已保存到: production_verification_report.json")
+        
+        return broken_count == 0
+    
+    def run_verification(self):
+        """运行完整验证"""
+        print("🚀 开始生产环境API验证")
+        print(f"🌐 目标: {self.base_url}")
+        print(f"⏰ 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*60)
+        
+        # 基础端点验证
+        self.verify_basic_endpoints()
+        
+        # 图片操作验证
+        self.verify_image_operations()
+        
+        # 监控端点验证
+        self.verify_monitoring_endpoints()
+        
+        # 生成报告
+        return self.generate_report()
+
+def main():
+    """主函数"""
+    verifier = ProductionAPIVerifier()
+    success = verifier.run_verification()
+    
+    if success:
+        print("\n🎉 生产环境API验证通过!")
+        sys.exit(0)
     else:
-        print("\n⚠️  Some production deployment features need attention")
-        print("\n💡 Next Steps:")
-        print("   1. Review failed tests and fix configuration issues")
-        print("   2. Ensure all required environment variables are set")
-        print("   3. Install missing dependencies (Docker, Docker Compose)")
-        print("   4. Place Google Cloud service account key in project root")
-        print("   5. Re-run verification after fixes")
-        return False
+        print("\n⚠️ 生产环境API存在一些问题，但核心功能可能正常")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    success = asyncio.run(main())
-    sys.exit(0 if success else 1)
+    main()

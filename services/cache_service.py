@@ -776,6 +776,104 @@ class CacheService:
             "memory_efficiency_score": min(100.0, (1.0 / max(1.0, redis_info.get("mem_fragmentation_ratio", 1.0))) * 100)
         }
     
+    async def get_analysis_result(
+        self, 
+        image_hash: str, 
+        analysis_type: str,
+        **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """通用方法：获取分析结果缓存"""
+        if not self.enabled:
+            return None
+            
+        try:
+            with self._lock:
+                self.cache_stats["total_operations"] += 1
+            
+            # 根据分析类型选择合适的缓存方法
+            if analysis_type == "labels" or analysis_type == "objects" or analysis_type == "faces":
+                result = await self.get_detection_result(
+                    image_hash,
+                    confidence_threshold=kwargs.get("confidence_threshold", 0.5),
+                    include_faces=analysis_type == "faces" or kwargs.get("include_faces", True),
+                    include_labels=analysis_type == "labels" or kwargs.get("include_labels", True)
+                )
+            elif analysis_type == "natural_elements" or analysis_type in ["vegetation", "water", "sky", "terrain"]:
+                result = await self.get_natural_elements_result(
+                    image_hash,
+                    analysis_depth=kwargs.get("analysis_depth", "comprehensive")
+                )
+            else:
+                # 通用缓存查找
+                cache_key = self._generate_cache_key(
+                    "detection_results", 
+                    image_hash,
+                    analysis_type=analysis_type,
+                    **kwargs
+                )
+                result = await self.get(cache_key)
+            
+            with self._lock:
+                if result:
+                    self.cache_stats["hits"] += 1
+                    logger.debug(f"Cache hit for analysis result: {analysis_type}")
+                else:
+                    self.cache_stats["misses"] += 1
+                    logger.debug(f"Cache miss for analysis result: {analysis_type}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to get analysis result from cache: {e}")
+            return None
+    
+    async def set_analysis_result(
+        self, 
+        image_hash: str, 
+        analysis_type: str,
+        result: Dict[str, Any],
+        **kwargs
+    ) -> bool:
+        """通用方法：设置分析结果缓存"""
+        if not self.enabled:
+            return False
+            
+        try:
+            # 根据分析类型选择合适的缓存方法
+            if analysis_type == "labels" or analysis_type == "objects" or analysis_type == "faces":
+                success = await self.set_detection_result(
+                    image_hash,
+                    result,
+                    confidence_threshold=kwargs.get("confidence_threshold", 0.5),
+                    include_faces=analysis_type == "faces" or kwargs.get("include_faces", True),
+                    include_labels=analysis_type == "labels" or kwargs.get("include_labels", True)
+                )
+            elif analysis_type == "natural_elements" or analysis_type in ["vegetation", "water", "sky", "terrain"]:
+                success = await self.set_natural_elements_result(
+                    image_hash,
+                    result,
+                    analysis_depth=kwargs.get("analysis_depth", "comprehensive")
+                )
+            else:
+                # 通用缓存存储
+                cache_key = self._generate_cache_key(
+                    "detection_results", 
+                    image_hash,
+                    analysis_type=analysis_type,
+                    **kwargs
+                )
+                config = self.cache_config.get("detection_results", {"ttl_hours": 24})
+                success = await self.set(cache_key, result, config["ttl_hours"])
+            
+            if success:
+                logger.debug(f"Cached analysis result: {analysis_type}")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to cache analysis result: {e}")
+            return False
+
     async def warm_cache_for_common_operations(self, image_hashes: List[str]) -> Dict[str, Any]:
         """Implement cache warming for common operations"""
         if not self.enabled:

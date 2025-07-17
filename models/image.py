@@ -170,6 +170,7 @@ class NaturalElementsResult(BaseModel):
 class NaturalElementsRequest(BaseModel):
     """自然元素分析请求模型"""
     image_hash: str = Field(..., description="图像哈希值")
+    analysis_types: Optional[List[str]] = Field(default=["vegetation", "water", "sky", "terrain"], description="分析类型列表")
     analysis_depth: str = Field(default="comprehensive", description="分析深度", pattern="^(basic|comprehensive)$")
     include_health_assessment: bool = Field(default=True, description="是否包含健康度评估")
     include_seasonal_analysis: bool = Field(default=True, description="是否包含季节分析")
