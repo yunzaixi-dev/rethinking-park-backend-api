@@ -1,3 +1,1 @@
-"""
-Main application package.
-"""
+# App package initialization
